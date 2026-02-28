@@ -48,7 +48,6 @@
 # =============================================================================
 
 # ── 표준 라이브러리 ─────────────────────────────────────────────────────────
-import glob
 import hashlib
 import os
 
@@ -59,13 +58,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ── wafer_app_global 핵심 함수 import ────────────────────────────────────────
-from app import _default_col_index   # 컬럼 기본값 탐색 (데이터셋 추가 UI)
-from app import apply_col_mapping    # x/y/data 컬럼 표준화 (데이터셋 추가 UI)
-from app import calculate_stats      # GPC 패턴 분류용 통계
-from app import create_2d_heatmap   # compact=True로 이상 웨이퍼 미리보기
-from app import get_sheet_names      # Excel 시트 목록 (데이터셋 추가 UI)
-from app import get_wafer_grid       # 불규칙 산점 → 균일 그리드 보간 (@st.cache_data)
-from app import load_file_cached     # CSV/Excel 로드 (데이터셋 추가 UI)
+from core import _default_col_index  # 컬럼 기본값 탐색 (데이터셋 추가 UI)
+from core import apply_col_mapping  # x/y/data 컬럼 표준화 (데이터셋 추가 UI)
+from core import calculate_stats  # GPC 패턴 분류용 통계
+from core import create_2d_heatmap  # compact=True로 이상 웨이퍼 미리보기
+from core import get_sheet_names  # Excel 시트 목록 (데이터셋 추가 UI)
+from core import get_wafer_grid  # 불규칙 산점 → 균일 그리드 보간 (@st.cache_data)
+from core import load_file_cached  # CSV/Excel 로드 (데이터셋 추가 UI)
 
 # =============================================================================
 # scikit-learn 가용성 탐지 (모듈 로딩 시 1회)
@@ -764,64 +763,75 @@ def _invalidate_ml_results() -> None:
 # [함수 7c] _render_dataset_adder (내부 헬퍼)
 # =============================================================================
 
-def _render_dataset_adder(data_folder: str) -> None:
+def _render_dataset_adder(data_folder: str = "") -> None:
     """
-    파일 시스템에서 데이터셋을 추가하는 UI.
+    사이드바에 업로드된 파일에서 시트/컬럼을 선택해 데이터셋을 추가하는 UI.
 
     [동작 흐름]
-    1. data_folder 의 CSV/Excel 파일 목록 스캔
-    2. 파일 선택 → 시트 선택 (Excel)
-    3. X / Y / Data 컬럼 지정
-    4. 이름 입력 (자동 생성 기본값)
-    5. [✅ 추가] 버튼 → apply_col_mapping → df_json 생성 → _SS_DATASETS 추가
+    1. uploaded_dfs (사이드바 업로드 파일) 에서 파일 선택
+    2. Excel 멀티시트인 경우 시트 선택
+    3. X / Y 컬럼 지정
+    4. Data 컬럼을 복수 선택 (체크박스) → 각 컬럼이 하나의 웨이퍼 데이터셋
+    5. [✅ 선택 컬럼 일괄 추가] 버튼 → 선택된 컬럼마다 apply_col_mapping → _SS_DATASETS 추가
+
+    [설계 근거]
+    THK-Rs.xlsx 같은 파일: 시트 2개(THK, Rs), 각 시트에 7개 레시피 컬럼.
+    기존 방식(파일 재업로드 + 컬럼 1개씩 추가)은 반복 작업이 14회 → UX 매우 불편.
+    새 방식: 파일 선택 → 시트 선택 → 데이터 컬럼 복수 체크 → 일괄 추가.
     """
-    file_list: list[str] = []
-    if os.path.exists(data_folder):
-        file_list = sorted(
-            os.path.basename(f)
-            for f in glob.glob(os.path.join(data_folder, "*.csv"))
-               + glob.glob(os.path.join(data_folder, "*.xls*"))
-        )
+    import io as _io
 
-    if not file_list:
-        st.warning(
-            f"⚠️ `{data_folder}` 폴더에 CSV/Excel 파일이 없습니다.  \n"
-            "웨이퍼 맵 탭에서 폴더를 변경하거나 샘플 데이터를 생성하세요."
+    # ── 사이드바 업로드 파일 목록 가져오기 ─────────────────────────────────────
+    uploaded_dfs    = st.session_state.get("uploaded_dfs", {})
+    uploaded_raw    = st.session_state.get("uploaded_raw", {})
+    uploaded_sheets = st.session_state.get("uploaded_sheets", {})
+
+    if not uploaded_dfs:
+        st.info(
+            "💡 사이드바에서 CSV/Excel 파일을 먼저 업로드하세요.  \n"
+            "업로드된 파일이 여기에 자동으로 표시됩니다."
         )
         return
 
-    # 파일 · 시트 선택
-    fa_col, sh_col = st.columns([3, 2])
-    with fa_col:
-        sel_file = st.selectbox("파일", file_list, key="ml_add_file")
-    full_path = os.path.join(data_folder, sel_file)
+    # ── 파일 선택 ──────────────────────────────────────────────────────────────
+    available_files = list(uploaded_dfs.keys())
+    sel_file = st.selectbox(
+        "📂 분석 파일", available_files, key="ml_add_file_sel",
+    )
 
-    try:
-        sheets = get_sheet_names(full_path)
-    except Exception:
-        sheets = []
+    # ── 시트 선택 (Excel 멀티시트) ─────────────────────────────────────────────
+    sheets = uploaded_sheets.get(sel_file, [])
+    sel_sheet = None
+    df_preview = None
 
-    with sh_col:
-        if sheets:
-            sel_sheet = st.selectbox("시트", sheets, key="ml_add_sheet")
+    if len(sheets) > 1:
+        sel_sheet = st.selectbox(
+            "📑 시트 선택", sheets, key="ml_add_sheet_sel",
+        )
+        raw_bytes = uploaded_raw.get(sel_file)
+        if raw_bytes:
+            try:
+                df_preview = pd.read_excel(
+                    _io.BytesIO(raw_bytes), sheet_name=sel_sheet
+                )
+            except Exception as exc:
+                st.error(f"❌ 시트 읽기 실패: {exc}")
+                return
         else:
-            sel_sheet = None
-            st.markdown(
-                "<div style='padding-top:28px;font-size:12px;color:#888;'>"
-                "CSV (시트 없음)</div>",
-                unsafe_allow_html=True,
-            )
+            df_preview = uploaded_dfs[sel_file]
+    else:
+        df_preview = uploaded_dfs[sel_file]
+        if sheets:
+            sel_sheet = sheets[0]
 
-    # 컬럼 목록 확보
-    try:
-        df_prev  = load_file_cached(full_path, sel_sheet)
-        all_cols = df_prev.columns.tolist()
-    except Exception as exc:
-        st.error(f"❌ 파일 읽기 실패: {exc}")
+    if df_preview is None or df_preview.empty:
+        st.warning("⚠️ 데이터가 비어 있습니다.")
         return
 
-    # X / Y / Data 컬럼 선택
-    cx, cy, cd = st.columns(3)
+    all_cols = df_preview.columns.tolist()
+
+    # ── X / Y 컬럼 지정 ───────────────────────────────────────────────────────
+    cx, cy = st.columns(2)
     with cx:
         x_col = st.selectbox(
             "X 컬럼", all_cols,
@@ -834,45 +844,97 @@ def _render_dataset_adder(data_folder: str) -> None:
             index=_default_col_index(all_cols, "y", 1),
             key="ml_add_y",
         )
-    with cd:
-        data_col = st.selectbox(
-            "Data 컬럼", all_cols,
-            index=_default_col_index(all_cols, "data", 2),
-            key="ml_add_data",
-        )
 
-    # 이름 입력 (자동 생성 기본값)
+    # ── Data 컬럼 복수 선택 ────────────────────────────────────────────────────
+    # X, Y로 사용되는 컬럼과 숫자가 아닌 컬럼은 제외
+    numeric_cols = df_preview.select_dtypes(include="number").columns.tolist()
+    candidate_cols = [c for c in numeric_cols if c != x_col and c != y_col]
+
+    # 순번 컬럼 같은 불필요한 컬럼 필터링 (Unnamed 등)
+    candidate_cols = [c for c in candidate_cols
+                      if not c.lower().startswith("unnamed")]
+
+    if not candidate_cols:
+        st.warning("⚠️ X/Y를 제외하면 숫자형 데이터 컬럼이 없습니다.")
+        return
+
+    st.markdown("**📊 데이터 컬럼 선택** (각 컬럼 = 1개 웨이퍼 데이터셋)")
+
+    # 전체 선택 / 해제 토글
+    select_all = st.checkbox(
+        f"전체 선택 ({len(candidate_cols)}개)",
+        value=False,
+        key="ml_add_select_all",
+    )
+
+    selected_data_cols = []
+    # 2열 레이아웃으로 체크박스 배치
+    n_cols_layout = 2
+    col_chunks = [candidate_cols[i:i + n_cols_layout]
+                  for i in range(0, len(candidate_cols), n_cols_layout)]
+    for chunk in col_chunks:
+        cols_ui = st.columns(n_cols_layout)
+        for j, col_name in enumerate(chunk):
+            with cols_ui[j]:
+                checked = st.checkbox(
+                    col_name,
+                    value=select_all,
+                    key=f"ml_add_chk_{col_name}",
+                )
+                if checked:
+                    selected_data_cols.append(col_name)
+
+    n_selected = len(selected_data_cols)
+
+    # ── 중복 이름 체크 ─────────────────────────────────────────────────────────
+    existing_names = {d.get("name") for d in st.session_state.get(_SS_DATASETS, [])}
     sheet_tag = f"[{sel_sheet}]" if sel_sheet else ""
-    auto_name = f"{os.path.splitext(sel_file)[0]}{sheet_tag}·{data_col}"
-    ds_name   = st.text_input("데이터셋 이름", value=auto_name, key="ml_add_name")
 
-    # 중복 이름 경고
-    existing_names = [d.get("name") for d in st.session_state.get(_SS_DATASETS, [])]
-    btn_disabled   = ds_name in existing_names
-    if btn_disabled:
-        st.warning(f"⚠️ '{ds_name}' 이름이 이미 존재합니다. 이름을 변경하세요.")
+    # ── 미리보기 ───────────────────────────────────────────────────────────────
+    if n_selected > 0:
+        st.caption(f"✅ {n_selected}개 컬럼 선택됨 → {n_selected}개 데이터셋이 추가됩니다.")
 
+        # 이름 충돌 경고
+        new_names = [f"{os.path.splitext(sel_file)[0]}{sheet_tag}·{c}"
+                     for c in selected_data_cols]
+        duplicates = [n for n in new_names if n in existing_names]
+        if duplicates:
+            st.warning(
+                f"⚠️ 이름이 이미 존재하는 항목: {', '.join(duplicates)}.  \n"
+                "중복 항목은 건너뜁니다."
+            )
+
+    btn_disabled = n_selected == 0
     if st.button(
-        "✅ 데이터셋 추가",
+        f"✅ 선택 컬럼 일괄 추가 ({n_selected}개)",
         type="primary",
-        key="ml_add_btn",
+        key="ml_add_batch_btn",
         disabled=btn_disabled,
         use_container_width=True,
     ):
-        try:
-            df_mapped = apply_col_mapping(df_prev, x_col, y_col, data_col)
-            new_ds = {"name": ds_name, "df_json": df_mapped.to_json()}
+        if st.session_state.get(_SS_DATASETS) is None:
+            st.session_state[_SS_DATASETS] = []
 
-            if st.session_state.get(_SS_DATASETS) is None:
-                st.session_state[_SS_DATASETS] = []
-            st.session_state[_SS_DATASETS].append(new_ds)
+        added_count = 0
+        for col_name in selected_data_cols:
+            ds_name = f"{os.path.splitext(sel_file)[0]}{sheet_tag}·{col_name}"
+            if ds_name in existing_names:
+                continue  # 중복 건너뜀
+            try:
+                df_mapped = apply_col_mapping(df_preview, x_col, y_col, col_name)
+                new_ds = {"name": ds_name, "df_json": df_mapped.to_json()}
+                st.session_state[_SS_DATASETS].append(new_ds)
+                existing_names.add(ds_name)
+                added_count += 1
+            except Exception as exc:
+                st.error(f"❌ '{col_name}' 추가 실패: {exc}")
 
-            # 새 웨이퍼 추가 → PCA 캐시 무효화
+        if added_count > 0:
             _invalidate_ml_results()
-            st.success(f"✅ '{ds_name}' 추가됨")
+            st.success(f"✅ {added_count}개 데이터셋 추가됨")
             st.rerun()
-        except Exception as exc:
-            st.error(f"❌ 추가 실패: {exc}")
+        else:
+            st.warning("추가된 항목이 없습니다 (모두 중복이거나 오류).")
 
 
 # =============================================================================

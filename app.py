@@ -333,16 +333,32 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 # ── 업로드 파일을 session_state에 저장 ────────────────────────────────────────
+# uploaded_dfs: {파일명: DataFrame} — 사이드바 파일 선택용 (첫 시트)
+# uploaded_raw: {파일명: bytes} — Excel 멀티시트 접근용 원본 바이트
+# uploaded_sheets: {파일명: [시트명, ...]} — Excel 시트 목록
 if "uploaded_dfs" not in st.session_state:
     st.session_state.uploaded_dfs = {}
+if "uploaded_raw" not in st.session_state:
+    st.session_state.uploaded_raw = {}
+if "uploaded_sheets" not in st.session_state:
+    st.session_state.uploaded_sheets = {}
 
 for uf in uploaded_files:
     if uf.name not in st.session_state.uploaded_dfs:
         try:
+            raw_bytes = uf.getvalue()
             if uf.name.lower().endswith(".csv"):
                 st.session_state.uploaded_dfs[uf.name] = pd.read_csv(uf)
+                st.session_state.uploaded_sheets[uf.name] = []
             else:
-                st.session_state.uploaded_dfs[uf.name] = pd.read_excel(uf)
+                # Excel: 원본 바이트 저장 → 나중에 시트별 접근 가능
+                st.session_state.uploaded_raw[uf.name] = raw_bytes
+                xf = pd.ExcelFile(io.BytesIO(raw_bytes))
+                st.session_state.uploaded_sheets[uf.name] = xf.sheet_names
+                # 기본 표시용으로 첫 시트 로드
+                st.session_state.uploaded_dfs[uf.name] = pd.read_excel(
+                    io.BytesIO(raw_bytes), sheet_name=0
+                )
         except Exception:
             st.sidebar.error(f"❌ {uf.name} 읽기 실패")
 
@@ -389,9 +405,20 @@ if compare_mode:
 else:
     selected_file = st.sidebar.selectbox("분석 파일 선택", file_names)
 
-    # Excel 시트 처리
-    df_raw = st.session_state.uploaded_dfs[selected_file]
-    selected_sheet = None  # 업로드 시 이미 첫 시트로 읽혔음
+    # Excel 시트 처리 — 멀티시트 지원
+    sheets = st.session_state.get("uploaded_sheets", {}).get(selected_file, [])
+    selected_sheet = None
+    if len(sheets) > 1:
+        selected_sheet = st.sidebar.selectbox(
+            "시트 선택", sheets, key="s_sheet_sel"
+        )
+        raw_bytes = st.session_state.uploaded_raw.get(selected_file)
+        if raw_bytes:
+            df_raw = pd.read_excel(io.BytesIO(raw_bytes), sheet_name=selected_sheet)
+        else:
+            df_raw = st.session_state.uploaded_dfs[selected_file]
+    else:
+        df_raw = st.session_state.uploaded_dfs[selected_file]
 
     current_key = (selected_file, selected_sheet)
     if st.session_state.get("_s_file") != current_key:
