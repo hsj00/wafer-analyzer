@@ -554,91 +554,183 @@ def _render_compare_dataset_manager() -> None:
 
 
 def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
-    """비교 서브탭: 파일 → 시트 → X/Y/Data 컬럼 선택 → 데이터셋 추가 UI."""
+    """비교 서브탭: 파일 또는 수동 입력으로 데이터셋 추가."""
     with st.expander("➕ 데이터셋 추가", expanded=(len(st.session_state.get("wm_datasets", [])) < 2)):
-        if not file_names:
-            st.warning("⚠️ 데이터 폴더에 파일이 없습니다. 사이드바에서 폴더를 변경하거나 샘플 데이터를 생성하세요.")
-            return
 
-        fa_col, sh_col = st.columns([3, 2])
-        with fa_col:
-            sel_file = st.selectbox("파일", file_names, key="cmp_add_file")
-        full_path = os.path.join(data_folder, sel_file)
+        add_file_tab, add_manual_tab = st.tabs(["📁 파일에서 추가", "✏️ 수동 입력"])
 
-        try:
-            sheets = get_sheet_names(full_path)
-        except Exception:
-            sheets = []
-
-        with sh_col:
-            if sheets:
-                sel_sheet = st.selectbox("시트", sheets, key="cmp_add_sheet")
+        # ── [탭 A] 파일에서 추가 (기존 로직 그대로) ──────────────────────
+        with add_file_tab:
+            if not file_names:
+                st.info("ℹ️ 데이터 폴더에 파일이 없습니다. '✏️ 수동 입력' 탭을 사용하세요.")
             else:
-                sel_sheet = None
-                st.markdown(
-                    "<div style='padding-top:28px;font-size:12px;color:#888;'>"
-                    "CSV (시트 없음)</div>",
-                    unsafe_allow_html=True,
-                )
+                # === 기존 파일 선택 로직 전체 (sel_file ~ st.button까지) ===
+                fa_col, sh_col = st.columns([3, 2])
+                with fa_col:
+                    sel_file = st.selectbox("파일", file_names, key="cmp_add_file")
+                full_path = os.path.join(data_folder, sel_file)
 
-        try:
-            df_preview = load_file_cached(full_path, sel_sheet)
-            all_cols = df_preview.columns.tolist()
-        except Exception as exc:
-            st.error(f"❌ 파일 읽기 실패: {exc}")
-            return
+                try:
+                    sheets = get_sheet_names(full_path)
+                except Exception:
+                    sheets = []
 
-        cx, cy, cd = st.columns(3)
-        with cx:
-            x_col = st.selectbox(
-                "X 컬럼", all_cols,
-                index=_default_col_index(all_cols, "x", 0),
-                key="cmp_add_x",
+                with sh_col:
+                    if sheets:
+                        sel_sheet = st.selectbox("시트", sheets, key="cmp_add_sheet")
+                    else:
+                        sel_sheet = None
+                        st.markdown(
+                            "<div style='padding-top:28px;font-size:12px;color:#888;'>"
+                            "CSV (시트 없음)</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                try:
+                    df_preview = load_file_cached(full_path, sel_sheet)
+                    all_cols = df_preview.columns.tolist()
+                except Exception as exc:
+                    st.error(f"❌ 파일 읽기 실패: {exc}")
+                    return
+
+                cx, cy, cd = st.columns(3)
+                with cx:
+                    x_col = st.selectbox(
+                        "X 컬럼", all_cols,
+                        index=_default_col_index(all_cols, "x", 0),
+                        key="cmp_add_x",
+                    )
+                with cy:
+                    y_col = st.selectbox(
+                        "Y 컬럼", all_cols,
+                        index=_default_col_index(all_cols, "y", 1),
+                        key="cmp_add_y",
+                    )
+                with cd:
+                    data_col = st.selectbox(
+                        "Data 컬럼", all_cols,
+                        index=_default_col_index(all_cols, "data", 2),
+                        key="cmp_add_data",
+                    )
+
+                sheet_tag = f"[{sel_sheet}]" if sel_sheet else ""
+                auto_name = f"{os.path.splitext(sel_file)[0]}{sheet_tag}·{data_col}"
+                ds_name = st.text_input("데이터셋 이름", value=auto_name, key="cmp_add_name")
+
+                existing_names = [d.get("name") for d in st.session_state.get("wm_datasets", [])]
+                btn_disabled = ds_name in existing_names
+                if btn_disabled:
+                    st.warning(f"⚠️ '{ds_name}' 이름이 이미 존재합니다.")
+
+                if st.button("✅ 추가", type="primary", key="cmp_add_btn",
+                             disabled=btn_disabled, use_container_width=True):
+                    try:
+                        df_mapped = apply_col_mapping(df_preview, x_col, y_col, data_col)
+                        new_ds = {
+                            "id":       dataset_id(),
+                            "name":     ds_name,
+                            "file":     full_path,
+                            "sheet":    sel_sheet,
+                            "x_col":    x_col,
+                            "y_col":    y_col,
+                            "data_col": data_col,
+                            "df_json":  df_mapped.to_json(),
+                        }
+                        if "wm_datasets" not in st.session_state:
+                            st.session_state.wm_datasets = []
+                        st.session_state.wm_datasets.append(new_ds)
+                        st.success(f"✅ '{ds_name}' 추가됨")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"❌ 추가 실패: {exc}")
+
+        # ── [탭 B] 수동 입력 (신규) ─────────────────────────────────────
+        with add_manual_tab:
+            st.caption(
+                "X, Y 좌표와 측정값을 직접 입력하거나 "
+                "스프레드시트에서 복사(Ctrl+V)해 붙여넣으세요."
             )
-        with cy:
-            y_col = st.selectbox(
-                "Y 컬럼", all_cols,
-                index=_default_col_index(all_cols, "y", 1),
-                key="cmp_add_y",
-            )
-        with cd:
-            data_col = st.selectbox(
-                "Data 컬럼", all_cols,
-                index=_default_col_index(all_cols, "data", 2),
-                key="cmp_add_data",
+
+            # 수동 입력 이름
+            manual_name = st.text_input(
+                "데이터셋 이름",
+                value=f"수동입력_{len(st.session_state.get('wm_datasets', [])) + 1}",
+                key="cmp_manual_name",
             )
 
-        sheet_tag = f"[{sel_sheet}]" if sel_sheet else ""
-        auto_name = f"{os.path.splitext(sel_file)[0]}{sheet_tag}·{data_col}"
-        ds_name = st.text_input("데이터셋 이름", value=auto_name, key="cmp_add_name")
+            # 빈 테이블 (session_state로 유지)
+            _CMP_MANUAL_KEY = "cmp_manual_df"
+            if _CMP_MANUAL_KEY not in st.session_state:
+                st.session_state[_CMP_MANUAL_KEY] = pd.DataFrame({
+                    "x": [None] * 10, "y": [None] * 10, "data": [None] * 10,
+                })
 
-        existing_names = [d.get("name") for d in st.session_state.get("wm_datasets", [])]
-        btn_disabled = ds_name in existing_names
-        if btn_disabled:
-            st.warning(f"⚠️ '{ds_name}' 이름이 이미 존재합니다.")
+            edited_manual = st.data_editor(
+                st.session_state[_CMP_MANUAL_KEY],
+                num_rows="dynamic",
+                key="cmp_manual_editor",
+                column_config={
+                    "x":    st.column_config.NumberColumn("X (mm)",  format="%.2f"),
+                    "y":    st.column_config.NumberColumn("Y (mm)",  format="%.2f"),
+                    "data": st.column_config.NumberColumn("측정값",  format="%.4f"),
+                },
+                use_container_width=True,
+                hide_index=False,
+            )
+            st.session_state[_CMP_MANUAL_KEY] = edited_manual
 
-        if st.button("✅ 추가", type="primary", key="cmp_add_btn",
-                     disabled=btn_disabled, use_container_width=True):
-            try:
-                df_mapped = apply_col_mapping(df_preview, x_col, y_col, data_col)
-                new_ds = {
-                    "id":       dataset_id(),
-                    "name":     ds_name,
-                    "file":     full_path,
-                    "sheet":    sel_sheet,
-                    "x_col":    x_col,
-                    "y_col":    y_col,
-                    "data_col": data_col,
-                    "df_json":  df_mapped.to_json(),
-                }
-                if "wm_datasets" not in st.session_state:
-                    st.session_state.wm_datasets = []
-                st.session_state.wm_datasets.append(new_ds)
-                st.success(f"✅ '{ds_name}' 추가됨")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"❌ 추가 실패: {exc}")
+            # 유효 데이터 추출
+            df_valid = edited_manual.dropna(subset=["x", "y", "data"]).copy()
+            for col in ["x", "y", "data"]:
+                df_valid[col] = pd.to_numeric(df_valid[col], errors="coerce")
+            df_valid = df_valid.dropna().reset_index(drop=True)
+            n_valid = len(df_valid)
 
+            if n_valid > 0:
+                st.success(f"✅ 유효 포인트: {n_valid}개")
+            else:
+                st.info("ℹ️ 데이터를 입력하면 추가할 수 있습니다.")
+
+            # 중복 이름 체크
+            existing_names = [d.get("name") for d in st.session_state.get("wm_datasets", [])]
+            name_dup = manual_name in existing_names
+            if name_dup:
+                st.warning(f"⚠️ '{manual_name}' 이름이 이미 존재합니다.")
+
+            btn_col, reset_col = st.columns([3, 1])
+            with btn_col:
+                if st.button(
+                    "✅ 수동 데이터 추가", type="primary",
+                    key="cmp_manual_add_btn",
+                    disabled=(n_valid < 3 or name_dup),
+                    use_container_width=True,
+                ):
+                    new_ds = {
+                        "id":       dataset_id(),
+                        "name":     manual_name,
+                        "file":     None,
+                        "sheet":    None,
+                        "x_col":    "x",
+                        "y_col":    "y",
+                        "data_col": "data",
+                        "df_json":  df_valid.to_json(),
+                    }
+                    if "wm_datasets" not in st.session_state:
+                        st.session_state.wm_datasets = []
+                    st.session_state.wm_datasets.append(new_ds)
+                    # 테이블 초기화 (추가 후 새 입력 준비)
+                    st.session_state[_CMP_MANUAL_KEY] = pd.DataFrame({
+                        "x": [None] * 10, "y": [None] * 10, "data": [None] * 10,
+                    })
+                    st.success(f"✅ '{manual_name}' 추가됨")
+                    st.rerun()
+
+            with reset_col:
+                if st.button("🗑️", key="cmp_manual_reset", help="테이블 초기화"):
+                    st.session_state[_CMP_MANUAL_KEY] = pd.DataFrame({
+                        "x": [None] * 10, "y": [None] * 10, "data": [None] * 10,
+                    })
+                    st.rerun()
 
 def _render_compare_card(ds: dict, resolution: int, colorscale: str,
                          n_contours: int, show_points: bool,
