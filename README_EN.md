@@ -1,132 +1,122 @@
 
-# 🔬 Wafer Map Analyzer — Cloud Edition
+# 🔬 Wafer Map Analyzer v3.0
 
-A Streamlit-based web application for **instant semiconductor process data analysis** in the browser.
+A Streamlit-based web application for analyzing semiconductor process data directly in a browser.
 
-Upload a CSV or Excel file and get **wafer map visualization · multi-parameter comparison · defect overlay · GPC analysis · Excel reports · ML anomaly detection** — all in one place.
-
-> 🌐 **This edition is optimized for Streamlit Community Cloud deployment.**
->
-> It uses file upload instead of local filesystem access, so anyone can use it from a browser with zero installation.
+Load CSV or Excel files — or **enter data manually** — to perform **wafer map visualization · multi-wafer comparison · GPC analysis · defect overlay · ML anomaly detection · Excel report generation** all in one place.
 
 ---
 
 ## Table of Contents
 
-1. [Who Is This For?](#1-who-is-this-for)
-2. [30-Second Quick Start](#2-30-second-quick-start)
-3. [Feature Overview](#3-feature-overview)
-4. [Project Structure](#4-project-structure)
-5. [Installation & Running](#5-installation--running)
-6. [Input Data Formats](#6-input-data-formats)
-7. [UI Layout](#7-ui-layout)
-8. [Tab-by-Tab Guide](#8-tab-by-tab-guide)
-9. [Usage Examples](#9-usage-examples)
-10. [FAQ](#10-faq)
+1. [Who This Is For](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#1-who-this-is-for)
+2. [What&#39;s New in v3.0](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#2-whats-new-in-v30)
+3. [How It All Fits Together](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#3-how-it-all-fits-together)
+4. [Project Structure](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#4-project-structure)
+5. [Installation &amp; Launch](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#5-installation--launch)
+6. [Input Data Format](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#6-input-data-format)
+7. [UI Layout](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#7-ui-layout)
+8. [Tab-by-Tab Guide](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#8-tab-by-tab-guide)
+9. [Workflow Examples](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#9-workflow-examples)
+10. [FAQ](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#10-faq)
+11. [requirements.txt](https://claude.ai/chat/4247ea22-24e9-4413-805e-69f1ae3d6061#11-requirementstxt)
 
 ---
 
-## 1. Who Is This For?
+## 1. Who This Is For
 
-* **Process engineers** who need to visualize wafer-level distribution data — film thickness, etch depth, sheet resistance, etc.
-* **Researchers** analyzing **GPC (Growth Per Cycle)** uniformity for ALD processes
-* **QC engineers** who want to **overlay defect inspection data** on top of process measurements
-* **Engineers** looking to compare multiple wafers side-by-side or **automatically detect anomalous wafers**
-* **Anyone** who needs to package analysis results into a neat **Excel report** for sharing
-
----
-
-## 2. 30-Second Quick Start
-
-New here? Just follow these three steps.
-
-```
-1.  Open the app — you'll see a sidebar on the left.
-2.  Click the "🎯 Generate 5 Samples" button.
-     → Virtual wafer data is created instantly for testing.
-3.  Select wafer_01.csv from the file list.
-     → Heatmap, Contour, 3D Surface, and statistics appear immediately!
-```
-
-> 💡 **Want to skip samples?** Just drag your own CSV/Excel file into the file uploader in the sidebar.
+* Process engineers who need to **visualize wafer-level spatial distribution** data (film thickness, etch depth, sheet resistance, etc.)
+* Researchers analyzing **GPC (Growth Per Cycle)** uniformity in ALD processes
+* QC engineers who want to **overlay defect inspection coordinates** on top of process measurement maps
+* Engineers who need to **compare multiple wafers** or automatically **screen for anomalous wafers** across a lot
+* Engineers who want to **manually enter measurement values** to quickly check a wafer map without needing a file
 
 ---
 
-## 3. Feature Overview
+## 2. What's New in v3.0
+
+### ① Compare Mode → Integrated into Wafer Map Tab
+
+The sidebar compare mode toggle has been removed. Comparison is now a  **sub-tab inside the Wafer Map tab** .
+
+| v2.0                                           | v3.0                                                                   |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| Sidebar `Enable Compare Mode`toggle          | Wafer Map tab →`🔬 Single Analysis`/`🔀 Compare Analysis`sub-tabs |
+| Compare mode replaces all tab views with cards | Freely switch between single and compare analysis                      |
+| Dataset management UI in sidebar               | Dataset management UI inside compare sub-tab                           |
+
+### ② Manual Input Mode Added
+
+**The app now works without any data files.** Select "✏️ Manual Input" in the single analysis sub-tab to get an empty table where you can type X/Y coordinates and measurement values directly, or paste data from a spreadsheet (Ctrl+V). Charts are generated automatically when 3+ valid points are entered.
+
+### ③ Multi-Parameter Tab Removed → Merged into Compare Sub-tab
+
+The `📐 Multi-Parameter` tab has been removed. To compare multiple measurement columns from the same file,  **add the same file multiple times in the compare sub-tab with different Data columns** .
+
+---
+
+## 3. How It All Fits Together
 
 ```
-CSV / Excel File Upload
-       │
-       ▼
-① 📊 Wafer Map     ←── Starting point for all tabs. Load your file here first.
-       │
-       ├──► ② 📐 Multi-Param     Compare multiple columns as side-by-side heatmaps
-       │
-       ├──► ③ 🔍 Defect Overlay  Overlay defect coordinates on the wafer map
-       │
-       ├──► ④ ⚗️ GPC Analysis    Thickness ÷ Cycles, radial uniformity profile
-       │
-       ├──► ⑤ 📄 Report Export   Stats + chart images + raw data → xlsx download
-       │
-       └──► ⑥ 🤖 ML Anomaly     Classify wafers via PCA + IsolationForest
+CSV / Excel file(s)  or  Manual input (typing / paste)
+        │
+        ▼
+① 📊 Wafer Map ─┬─ 🔬 Single Analysis  ← Start here: load a file or enter data
+                 └─ 🔀 Compare Analysis  ← Compare multiple wafers/parameters side by side
+        │
+        ├──► ② 🔍 Defect Overlay    Overlay a defect CSV on top of the wafer map
+        │
+        ├──► ③ ⚗️ GPC Analysis      Thickness ÷ Cycle count, radial uniformity profile
+        │
+        ├──► ④ 📄 Report            Export stats + chart images + raw data as .xlsx
+        │
+        └──► ⑤ 🤖 ML Anomaly        Auto-classify wafers via PCA + IsolationForest
 ```
 
-> **Tabs ②–⑤** require data to be loaded in Tab ① first.
+> Tabs ②–④ require data to be loaded in Single Analysis first.
 >
-> **Tab ⑥** has its own dataset panel — you can add files directly within the tab.
+> Tab ⑤ has its own built-in dataset panel — files can be added directly inside the tab.
+>
+> Datasets added in the Compare sub-tab are automatically available in the ML tab.
 
 ---
 
 ## 4. Project Structure
 
 ```
-wafer_cloud/
-│
-├── .streamlit/
-│   └── config.toml          # App config (upload limit, theme colors)
+wafer_analysis/
 │
 ├── app.py                   # Main entry point — run this file
-├── core.py                  # Shared core functions (interpolation, plots, stats)
-├── requirements.txt         # Python package list
+├── folder_picker_helper.py  # OS native folder picker helper (called automatically)
 │
 └── modules/
-    ├── __init__.py          # Safe module loader
-    ├── multi_param.py       # Tab ② Multi-parameter subplots
-    ├── defect_overlay.py    # Tab ③ Defect overlay
-    ├── gpc.py               # Tab ④ GPC analysis
-    ├── report.py            # Tab ⑤ Excel report generation
-    └── ml_anomaly.py        # Tab ⑥ ML-based anomaly detection
+    ├── __init__.py          # Safe module loader — do not modify
+    ├── defect_overlay.py    # Tab ② Defect overlay
+    ├── gpc.py               # Tab ③ GPC analysis
+    ├── report.py            # Tab ④ Excel report generation
+    └── ml_anomaly.py        # Tab ⑤ ML-based anomaly detection
 ```
 
-> **⚠️ Important:** Both the `modules/` folder and `core.py` must be present.
-> If only `app.py` exists, Tabs ②–⑥ will all appear with a `⚠️` disabled status.
+> **⚠️ Important:** The `modules/` folder and all files inside it must be present.
+>
+> If only `app.py` exists, tabs ②–⑤ will all appear as `⚠️` (disabled).
+>
+> `multi_param.py` was removed in v3.0. If the file still exists, it is safely ignored.
 
 ---
 
-## 5. Installation & Running
+## 5. Installation & Launch
 
-### Option A: Deploy to Streamlit Community Cloud (Recommended)
+### Step 1 — Check Python Version
 
-No installation needed — just push to GitHub!
-
-```
-1.  Push this entire project folder to a GitHub repository.
-2.  Go to https://share.streamlit.io
-3.  Click [New app].
-4.  Select your repository, branch, and main file path (app.py).
-5.  Click [Deploy!] — deployment finishes in a few minutes.
-6.  A unique URL is generated — anyone can access it from a browser.
-```
-
-### Option B: Run Locally
-
-**Step 1 — Check Python version** (3.10 or higher required)
+Python **3.10 or higher** is required.
 
 ```bash
 python --version
+# Must show Python 3.10.x or higher
 ```
 
-**Step 2 — Create a virtual environment (recommended)**
+### Step 2 — Create a Virtual Environment (Recommended)
 
 ```bash
 python -m venv venv
@@ -138,42 +128,63 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-**Step 3 — Install packages**
+### Step 3 — Install Packages
+
+If a `requirements.txt` is available:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**Step 4 — Launch the app**
+Otherwise, install directly:
+
+```bash
+pip install streamlit pandas numpy plotly scipy openpyxl scikit-learn kaleido
+```
+
+| Package      | Purpose                                     | Without It                       |
+| ------------ | ------------------------------------------- | -------------------------------- |
+| streamlit    | Web UI framework                            | App won't start                  |
+| pandas       | CSV/Excel reading and data processing       | App won't start                  |
+| numpy        | Numerical computation                       | App won't start                  |
+| plotly       | Interactive charts                          | App won't start                  |
+| scipy        | Wafer grid interpolation (`griddata`)     | App won't start                  |
+| openpyxl     | Reading and writing Excel files             | App won't start                  |
+| scikit-learn | ML anomaly detection (PCA, IsolationForest) | 🤖 ML tab disabled only          |
+| kaleido      | Chart → PNG conversion for reports         | Reports generated without images |
+
+> `scikit-learn` and `kaleido` are optional. All other tabs work without them.
+
+### Step 4 — Run the Application
 
 ```bash
 streamlit run app.py
 ```
 
-Your browser will automatically open `http://localhost:8501`.
+A browser tab opens automatically at `http://localhost:8501`.
 
-### Package List
+### Step 5 — First Launch
 
-| Package      | Purpose                                  | If Missing               |
-| ------------ | ---------------------------------------- | ------------------------ |
-| streamlit    | Web UI framework                         | App will not launch      |
-| pandas       | CSV/Excel I/O and data processing        | App will not launch      |
-| numpy        | Numerical operations                     | App will not launch      |
-| plotly       | Interactive charts                       | App will not launch      |
-| scipy        | Wafer grid interpolation (`griddata`)    | App will not launch      |
-| openpyxl     | Excel file read/write                    | App will not launch      |
-| scikit-learn | ML anomaly detection (PCA, IsolationForest) | 🤖 ML tab disabled only |
-| kaleido      | Chart → PNG export (for report images)  | Report generated without images |
+No data files yet? No problem. You have two options:
 
-> `scikit-learn` and `kaleido` are optional. All other tabs work fine without them.
+**Option A — Generate Sample Data:**
+
+1. After launching, find the **"🎯 Generate 5 Samples"** button in the left sidebar.
+2. Click it to auto-create `wafer_01.csv` through `wafer_05.csv` in `./wafer_data/`.
+
+**Option B — Manual Input (new in v3.0):**
+
+1. Go to Wafer Map tab → Single Analysis → select  **"✏️ Manual Input"** .
+2. Type X, Y, Data values directly in the empty table, or paste from a spreadsheet.
+3. Charts appear automatically once 3+ valid points are entered.
 
 ---
 
-## 6. Input Data Formats
+## 6. Input Data Format
 
-### 6-1. Basic Wafer Map Data (CSV / Excel)
+### 6-1. Wafer Map Data (CSV / Excel)
 
-Any file with X/Y coordinates and a measurement value column will work.
+Any file containing X/Y coordinates and a measurement value column will work.
 
 | x     | y     | data  |
 | ----- | ----- | ----- |
@@ -181,32 +192,44 @@ Any file with X/Y coordinates and a measurement value column will work.
 | -50.0 | 86.6  | 498.7 |
 | -86.6 | 50.0  | 503.1 |
 
-* **Auto-detected column names:** `x`, `y`, `data` (case-insensitive). For other names, use the **🔗 Column Mapping** section in the sidebar.
-* **Units:** mm-based. 200 mm wafer → radius ~100 mm
-* **Minimum points:** 10 or more recommended for good interpolation quality
+* **Auto-detected column names:** `x`, `y`, `data` (case-insensitive). Other names can be mapped in the sidebar under  **🔗 Column Mapping** .
+* **Unit:** Millimeters (mm). Typical: radius ~100 mm for a 200 mm wafer, ~150 mm for a 300 mm wafer.
+* **Minimum points:** 10+ recommended for reliable interpolation (3+ for manual input).
 
-### 6-2. GPC Analysis Data
+### 6-2. Manual Input Data (new in v3.0)
 
-Requires additional thickness and cycle count columns.
+Enter data directly in the Wafer Map tab without any files.
+
+* Select "✏️ Manual Input" in the Single Analysis sub-tab
+* A 20-row empty table (x, y, data) is displayed
+* Type values directly in cells, or copy a range from a spreadsheet and paste with **Ctrl+V**
+* Rows can be added/removed (use the `+` button below the table)
+* NaN rows are automatically excluded; charts appear once 3+ valid points exist
+* Use the 🗑️ Reset button to clear back to an empty table
+
+### 6-3. GPC Analysis Data
+
+Requires an additional thickness column and a cycle count column.
 
 | x     | y     | thickness_nm | n_cycles |
 | ----- | ----- | ------------ | -------- |
 | 0.0   | 100.0 | 51.2         | 100      |
 | -50.0 | 86.6  | 49.8         | 100      |
 
-* If cycle count is the same for all points, you can enter the number directly in the tab instead of adding a column.
+* If all sites share the same cycle count, you can enter it as a single number in the GPC tab.
 
-### 6-3. Defect Overlay Data (Separate File)
+### 6-4. Defect Overlay Data (Separate File)
 
-Upload separately within the Defect Overlay tab.
+Place a separate CSV/Excel file in the same data folder as your wafer map files.
 
 | x     | y     | class    | size | description    |
 | ----- | ----- | -------- | ---- | -------------- |
 | 10.5  | -20.3 | Particle | 5.0  | Large particle |
 | -33.2 | 41.8  | Scratch  | 12.0 | Linear scratch |
 
-* **Defect category column:** Auto-detects `class`, `type`, or `category`.
-* **Different coordinate units?** Use the unit conversion option in the tab (mm / μm / cm / inch).
+* **Defect class column:** Any of `class`, `type`, `category`, `defecttype`, `label` is recognized automatically.
+* `size` and `description` are optional.
+* **Unit mismatch** (e.g., defect file in μm, wafer file in mm): use the unit conversion selector in the tab.
 
 ---
 
@@ -214,40 +237,46 @@ Upload separately within the Defect Overlay tab.
 
 ### Sidebar
 
-The left sidebar is organized into four sections.
+The left sidebar is divided into three sections.
 
 #### 📁 Data Management
 
-| Item               | Description                                          |
-| ------------------ | ---------------------------------------------------- |
-| File Upload        | Drag or click to upload CSV/Excel files              |
-| 🎯 Generate Samples | Instantly create 5 virtual wafer datasets for testing |
+| Item                  | Description                                                     |
+| --------------------- | --------------------------------------------------------------- |
+| 📂 Folder button      | Open OS file dialog or built-in browser to select a data folder |
+| Path text input       | Type a folder path directly                                     |
+| File list             | CSV/Excel files in the selected folder are listed automatically |
+| 🎯 Generate 5 Samples | Creates 5 sample CSVs in `./wafer_data/`for immediate testing |
 
-> **You can upload multiple files at once.** Useful for Compare Mode.
-
-#### 🔀 Analysis Mode
-
-Switch between single-file analysis and side-by-side multi-wafer comparison.
+> **Default folder:** The app looks for `./wafer_data/` on startup.
 
 #### ⚙️ Visualization Settings
 
-| Setting          | Default | Description                                  |
-| ---------------- | ------- | -------------------------------------------- |
-| Color Scale      | Rainbow | Chart color theme                            |
-| Resolution       | 100     | Interpolation grid size (higher = sharper, slower) |
-| Contour Levels   | 20      | Number of contour line levels                |
-| Line Scan Angle  | 0°      | Cross-section profile direction              |
+Controls for chart appearance.
+
+| Setting         | Default | Description                                        |
+| --------------- | ------- | -------------------------------------------------- |
+| Color scale     | Rainbow | Chart color theme                                  |
+| Resolution      | 100     | Interpolation grid size (higher = sharper, slower) |
+| Contour levels  | 20      | Number of contour lines                            |
+| Line Scan angle | 0°     | Cross-section direction                            |
 
 #### 🔗 Column Mapping
 
-After loading a file, assign which columns represent X, Y, and the measurement value. Columns named `x`, `y`, `data` are selected automatically.
+After loading a file, assign the X-axis, Y-axis, and measurement value columns. Columns named `x`, `y`, and `data` are selected automatically.
 
-### Main Area (Tabs)
+### Main Panel (Tabs)
 
-In single-analysis mode, six tabs are displayed at the top.
+Five tabs appear along the top. A tab shows `⚠️` if its module file is missing or a required package is not installed.
 
 ```
-📊 Wafer Map │ 📐 Multi-Param │ 🔍 Defect Overlay │ ⚗️ GPC Analysis │ 📄 Report │ 🤖 ML Anomaly
+📊 Wafer Map │ 🔍 Defect Overlay │ ⚗️ GPC Analysis │ 📄 Report │ 🤖 ML Anomaly
+```
+
+The Wafer Map tab contains two sub-tabs:
+
+```
+🔬 Single Analysis │ 🔀 Compare Analysis
 ```
 
 ---
@@ -256,167 +285,272 @@ In single-analysis mode, six tabs are displayed at the top.
 
 ### Tab ① — 📊 Wafer Map
 
-**The starting point for all tabs.** Upload a file and charts + statistics are generated automatically.
+The  **starting point for everything** .
 
-**Charts:** 2D Heatmap · Contour · Line Scan · 3D Surface
+#### 🔬 Single Analysis Sub-tab
 
-**Statistics:** Mean · Maximum · Minimum · Std Dev · Uniformity (%) · Range · Number of Sites
+**Data Source Selection**
 
-**Raw Data Editing:** Edit cells directly in the table at the bottom — charts update instantly. Download the modified data as CSV.
+| Mode              | Description                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| 📁 File Data      | Analyze the CSV/Excel file selected in the sidebar (default) |
+| ✏️ Manual Input | Type or paste data directly into an empty table              |
+
+> When no files exist in the data folder, only "✏️ Manual Input" is shown.
+
+**Available Charts**
+
+| Chart      | Description                                       |
+| ---------- | ------------------------------------------------- |
+| 2D Heatmap | Color-coded spatial distribution map              |
+| Contour    | Iso-value lines showing distribution boundaries   |
+| Line Scan  | Cross-section profile along a user-selected angle |
+| 3D Surface | Measurement values rendered as a 3D height map    |
+
+**Statistics:** Mean · Maximum · Minimum · Std Dev · Uniformity(%) · Range · Site count
+
+**Live Data Editing:** Edit cells in the Raw Data table at the bottom — charts update instantly. Use **📥 Download CSV** to save modified data.
+
+#### 🔀 Compare Analysis Sub-tab
+
+Compare multiple wafers or multiple parameters from the same wafer  **side by side** .
+
+> This sub-tab  **replaces both the v2.0 Compare Mode and the Multi-Parameter tab** .
+
+**How to Use**
+
+1. Switch to the Compare Analysis sub-tab.
+2. Expand **➕ Add Dataset** and select file, sheet, and X/Y/Data columns.
+3. Add 2+ datasets and a card-based comparison view appears.
+4. Each card shows  **Heatmap + Contour + Statistics** .
+
+**Features**
+
+* **🔒 Lock Color Scale** unifies the colorbar range across all cards.
+* **Cards per row** can be set to 2, 3, or 4.
+* **Add the same file with different Data columns** to compare multiple parameters from one wafer.
+
+**Multi-Parameter Comparison Example:**
+
+From the same `wafer_01.xlsx`:
+
+* Dataset 1: X=x, Y=y, Data=**thickness**
+* Dataset 2: X=x, Y=y, Data=**sheet_resistance**
+* Dataset 3: X=x, Y=y, Data=**stress**
+
+→ Three cards appear side by side, showing three properties from the same wafer at a glance.
 
 ---
 
-### Tab ② — 📐 Multi-Parameter
+### Tab ② — 🔍 Defect Overlay
 
-**Compare multiple columns from the same file as side-by-side wafer heatmaps.**
+**Overlay defect locations on the wafer map** to analyze spatial correlation between process results and defect distribution.
 
-```
-1. Load a data file in Tab ①.
-2. Switch to the 📐 Multi-Param tab.
-3. Set X/Y columns and select 2–6 parameter columns to compare.
-4. Enable "Shared Scale" to unify the color range across all maps.
-```
+**How to Use**
 
----
+1. Place a defect CSV/Excel file in the data folder.
+2. In the 🔍 Defect Overlay tab, select the defect file.
+3. Choose which defect classes to display.
+4. If coordinate units differ from the wafer map, set the unit conversion option.
 
-### Tab ③ — 🔍 Defect Overlay
-
-**Overlay defect coordinates on top of the wafer map** to analyze spatial correlation between process data and defects.
-
-```
-1. Load wafer map data in Tab ①.
-2. Switch to the 🔍 Defect Overlay tab.
-3. Upload a defect CSV/Excel file.
-4. Select which defect classes to display.
-5. If coordinate units differ, adjust the unit conversion option.
-```
+**Features:** Scatter overlay on Heatmap or Contour · Per-class color/marker assignment (up to 24 classes) · Unit conversion (mm / cm / m / inch) · Show/hide out-of-wafer defects
 
 ---
 
-### Tab ④ — ⚗️ GPC Analysis
+### Tab ③ — ⚗️ GPC Analysis
 
-Calculate **GPC (Growth Per Cycle)** for ALD processes and analyze spatial distribution.
+Calculate and visualize **GPC (Growth Per Cycle)** for ALD processes.
 
-> **GPC = Thickness (nm) ÷ Number of Cycles**
+> **GPC = Thickness (nm) ÷ Cycle count**
 
-```
-1. Load a file containing thickness data in Tab ①.
-2. Switch to the ⚗️ GPC tab.
-3. Select the thickness column and cycle input mode.
+**Cycle Count Modes**
+
+| Mode         | Description                                               |
+| ------------ | --------------------------------------------------------- |
+| Fixed Cycle  | Apply one cycle count to all sites (enter a number)       |
+| Column Cycle | Use per-site values from a cycle count column in the file |
+
+**How to Use**
+
+1. Load a thickness file in Single Analysis.
+2. Go to the ⚗️ GPC tab.
+3. Select the thickness column and cycle mode.
 4. GPC Heatmap and radial profile are generated automatically.
-```
 
-**Results:** GPC Heatmap · Radial GPC Profile · Center / Mid / Edge zone statistics
-
----
-
-### Tab ⑤ — 📄 Report Export
-
-Export analysis results as an **Excel (.xlsx) file**.
-
-| Sheet      | Contents                                              |
-| ---------- | ----------------------------------------------------- |
-| Summary    | File name, timestamp, statistical summary             |
-| Statistics | Detailed statistics                                   |
-| Maps       | Heatmap · Contour · Line Scan · 3D Surface images    |
-| Raw Data   | Original measurement data (up to 5,000 rows)          |
-| GPC        | GPC analysis results (included only if GPC tab was run) |
-
-> Chart images require the `kaleido` package. Without it, the report is generated without images.
+**Results:** GPC Heatmap · Radial GPC profile · Center / Mid / Edge zone statistics · Center-to-Edge uniformity
 
 ---
 
-### Tab ⑥ — 🤖 ML Anomaly Detection
+### Tab ④ — 📄 Report
 
-**Automatically detect anomalous wafers** using PCA + IsolationForest. Requires at least 3 wafer datasets.
+Export analysis results as an  **Excel (.xlsx) file** .
 
-```
-1. Switch to the 🤖 ML Anomaly tab.
-2. Upload wafer files in the 📋 Analysis Datasets panel.
-3. Once 3+ datasets are added, configure parameters.
-4. Click [🤖 Run Anomaly Detection].
-```
+**Excel Sheet Layout**
 
-**Anomaly Pattern Classification**
+| Sheet      | Contents                                                                 |
+| ---------- | ------------------------------------------------------------------------ |
+| Summary    | Filename, generation timestamp, statistics (Mean, Std, Uniformity, etc.) |
+| Statistics | Detailed statistical data                                                |
+| Maps       | Heatmap · Contour · Line Scan · 3D Surface chart images               |
+| Raw Data   | Original measurement data (up to 5,000 rows)                             |
+| GPC        | GPC results and chart (included only if GPC analysis was run first)      |
 
-| Pattern          | Characteristics       | Possible Process Cause                        |
-| ---------------- | --------------------- | --------------------------------------------- |
-| Ring             | Donut-shaped radial   | Gas flow center concentration, diffusion non-uniformity |
-| Edge Degradation | Edge thickness drop   | Edge exclusion, loading effect                |
-| X/Y-Gradient     | Directional gradient  | Substrate tilt, gas directionality            |
-| Hotspot          | Localized anomaly     | Particle, scratch, measurement error          |
-| Global Shift     | Overall level offset  | Recipe change, process drift                  |
-| Normal           | Normal                | —                                             |
+**How to Use**
 
----
+1. Load data in Single Analysis.
+2. (Optional) Run GPC analysis in the GPC tab to include the GPC sheet.
+3. Go to the 📄 Report tab.
+4. Check the items to include (chart images / raw data / GPC).
+5. Click **Generate Excel Report** — the file downloads immediately.
 
-### Compare Mode
-
-Toggle **🔀 Analysis Mode → Enable Compare Mode** in the sidebar to view multiple wafers side by side.
-
-* Use **➕ Add Dataset** to upload files and assign columns for each wafer.
-* You can compare different data columns from the same file by adding it multiple times.
-* **🔒 Lock Color Scale** unifies the color range across all comparison cards.
+> Chart images require the `kaleido` package.
 
 ---
 
-## 9. Usage Examples
+### Tab ⑤ — 🤖 ML Anomaly Detection
 
-### Example A: First Launch — Try Everything with Sample Data
+Automatically detect anomalous wafers among a group using  **PCA + Isolation Forest** .
+
+Requires at least 3 wafer datasets.
+
+**How to Use**
+
+1. Go to the 🤖 ML Anomaly Detection tab.
+2. In the **📋 Analysis Datasets** panel, add your wafer files.| Action                     | Description                                       |
+   | -------------------------- | ------------------------------------------------- |
+   | **➕ Add Dataset**   | Select file, sheet, and columns, then click Add   |
+   | **🔄 Sync from App** | Import datasets from Compare sub-tab in one click |
+   | **✕ button**        | Remove an individual dataset                      |
+   | **🗑️ Reset All**   | Clear all datasets and analysis results           |
+3. Once 3+ datasets are registered, configure parameters.| Parameter          | Default | Description                           |
+   | ------------------ | ------- | ------------------------------------- |
+   | Contamination      | 10%     | Expected fraction of anomalous wafers |
+   | Feature Resolution | 40      | Grid size for feature extraction      |
+4. Click  **🤖 Run Anomaly Detection** .
+
+**Results**
+
+* **PCA Scatter Plot:** Anomalous wafers (red) vs. normal wafers (blue)
+* **Anomaly Score Bar Chart:** Per-wafer score ranked from high to low
+* **Results Table:** Anomaly score ranking + pattern classification
+* **Anomaly Wafer Heatmap Preview:** Wafer maps for detected anomalies
+
+**Anomaly Pattern Types**
+
+| Pattern          | Characteristics                  | Possible Process Cause                             |
+| ---------------- | -------------------------------- | -------------------------------------------------- |
+| Ring             | Donut-shaped radial distribution | Non-uniform gas flow (center-heavy or edge-heavy)  |
+| Edge Degradation | Thickness drop near wafer edge   | Edge exclusion effect, loading effect              |
+| X/Y-Gradient     | Directional thickness gradient   | Substrate tilt, directional gas flow               |
+| Hotspot          | Localized anomaly peak           | Particle contamination, scratch, measurement error |
+| Global Shift     | Whole-wafer level offset         | Recipe change, process drift                       |
+| Normal           | Normal pattern                   | —                                                 |
+
+> Requires `scikit-learn`: `pip install scikit-learn`
+
+---
+
+## 9. Workflow Examples
+
+### Example A: First Launch — Instant Start with Manual Input
 
 ```
-1. Open the app (Cloud URL or localhost:8501)
-2. Sidebar → Click 🎯 Generate 5 Samples
+1. Run: streamlit run app.py
+2. Wafer Map tab → Single Analysis → select ✏️ Manual Input
+3. Type coordinates and values in the empty table (or paste from Excel with Ctrl+V)
+4. Once 3+ points are entered, Heatmap, Contour, and stats appear automatically
+```
+
+### Example B: Try Everything with Sample Data
+
+```
+1. Run: streamlit run app.py
+2. Sidebar → click 🎯 Generate 5 Samples
 3. Select wafer_01.csv from the file list
-4. Tab ① → Check Heatmap, Contour, and statistics
-5. Tab ② → Try multi-column comparison
-6. Tab ⑥ → Upload 5 wafer files → Run anomaly detection
+4. Single Analysis → review Heatmap, Contour, and statistics
+5. Compare Analysis → add all 5 files via ➕ Add Dataset → compare side by side
+6. ML tab → 🔄 Sync from App → run anomaly detection
 ```
 
-### Example B: ALD Process GPC Analysis
+### Example C: Multi-Parameter Comparison
 
 ```
-1. Upload a CSV with x, y, thickness_nm, n_cycles columns
-2. Sidebar column mapping: X=x, Y=y, Data=thickness_nm
-3. Tab ④ → Thickness column: thickness_nm / Mode: Column / Cycle column: n_cycles
-4. Review GPC Heatmap and Center/Mid/Edge statistics
-5. Tab ⑤ → Check "Include GPC" → Download Excel report
+1. Prepare an Excel file with multiple measurement columns (thickness, rs, stress, etc.)
+2. Go to Compare Analysis sub-tab
+3. ➕ Add Dataset: same file, different Data column → add 3 datasets
+4. Check 🔒 Lock Color Scale → compare absolute values across parameters
 ```
 
-### Example C: Defect–Process Correlation Analysis
+### Example D: ALD GPC Analysis
+
+```
+1. Prepare CSV with columns: x, y, thickness_nm, n_cycles
+2. Select the folder and file in the sidebar
+3. Column mapping: X=x, Y=y, Data=thickness_nm
+4. GPC tab → Thickness col: thickness_nm / Mode: Column / Cycle col: n_cycles
+5. Review GPC Heatmap and Center/Mid/Edge zone statistics
+6. Report tab → check GPC → click Generate → download report
+```
+
+### Example E: Correlate Defect Locations with Process Data
 
 ```
 1. Prepare two files: thickness CSV + defect coordinates CSV
-2. Tab ① → Upload thickness CSV → Check Heatmap
-3. Tab ③ → Upload defect CSV → Select classes (e.g., Particle, Scratch)
-4. Analyze spatial correlation between low-thickness regions and defect distribution
+2. Single Analysis → load thickness file → review Heatmap
+3. Defect Overlay tab → select defect file → choose classes (e.g. Particle, Scratch)
+4. Visually compare thin regions on the map with defect cluster locations
 ```
 
-### Example D: Automated Anomaly Detection Across a Lot
+### Example F: Screen a Lot for Anomalous Wafers
 
 ```
-1. Prepare measurement CSVs for 10 wafers from the same process
-2. Tab ⑥ → Upload and add all 10 files
-3. Set Contamination to 0.10, Resolution to 40 → Run anomaly detection
-4. Check the PCA scatter plot for outlier wafers
-5. Review the results table → Investigate top-scoring wafers
+1. Prepare measurement CSVs for 10 wafers from the same process step
+2. Compare Analysis → add all 10 files (also gives a visual side-by-side comparison)
+3. ML tab → 🔄 Sync from App → import all 10 datasets
+4. Contamination: 0.10, Resolution: 40 → click Run
+5. PCA scatter: identify wafers that deviate from the main cluster
 ```
 
 ---
 
 ## 10. FAQ
 
-| Question                                  | Answer                                                                                    |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------- |
-| I don't have any data to test with        | Click the **🎯 Generate 5 Samples** button in the sidebar                                 |
-| A tab shows ⚠️ next to its name          | The module file is missing or a required package is not installed                          |
-| The 🤖 ML tab is disabled                 | `scikit-learn` is needed (already included in requirements.txt for Cloud deployment)      |
-| Report is missing chart images            | `kaleido` is needed (already included in requirements.txt for Cloud deployment)           |
-| Defect coordinates don't align            | Use the **unit conversion** option in the 🔍 Defect Overlay tab                           |
-| I see an interpolation failure warning    | Too few data points or all points lie on a single line. Auto-fallback is applied           |
-| Is there a file upload size limit?        | Default is 200 MB. Adjust in `.streamlit/config.toml`                                      |
-| I deployed to Cloud but get errors        | Verify that `requirements.txt` and `core.py` are in the project root                      |
+| Question                                    | Answer                                                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| No data files to test with?                 | Click**🎯 Generate 5 Samples**in the sidebar, or use**✏️ Manual Input**to enter data directly |
+| Can I use the app without files?            | Yes, since v3.0. Go to Wafer Map → Single Analysis → ✏️ Manual Input                              |
+| Where did the Multi-Parameter tab go?       | Merged into the Compare sub-tab in v3.0. Add the same file with different Data columns                |
+| Where did the Compare Mode toggle go?       | Go to Wafer Map tab → 🔀 Compare Analysis sub-tab                                                    |
+| A tab shows ⚠️ after its name?            | The module file is missing or a required package is not installed                                     |
+| 🤖 ML tab is disabled?                      | Run `pip install scikit-learn`and restart the app                                                   |
+| No chart images in the Excel report?        | Run `pip install kaleido`and restart the app                                                        |
+| Folder picker won't open on macOS?          | Run `brew install python-tk`and restart the app                                                     |
+| Defect coordinates are misaligned?          | Use the**Coordinate Unit**selector in the Defect Overlay tab (mm / cm / m / inch)               |
+| Interpolation warning appears?              | Occurs when data points are too few or all collinear. Falls back to nearest-neighbor automatically    |
+| I want to edit measurement values directly? | Edit cells in the Raw Data table at the bottom of Single Analysis                                     |
+| I want to save manually entered data?       | Click the 📥 Download CSV button below the charts                                                     |
 
 ---
 
-*Tested with Python 3.10+ · Streamlit 1.35+*
+## 11. requirements.txt
+
+Save the following as `requirements.txt` in the project root.
+
+```
+streamlit>=1.35.0
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.15.0
+scipy>=1.10.0
+openpyxl>=3.1.0
+scikit-learn>=1.3.0
+kaleido>=0.2.1
+```
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+*Tested on Python 3.10+ · Streamlit 1.35+*
