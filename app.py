@@ -1289,7 +1289,7 @@ with tab_wafer:
         ctrl_col1, ctrl_col2 = st.columns([1, 1])
         with ctrl_col1:
             cols_per_row = st.radio(
-                "행당 맵 개수", [2, 3, 4], index=1,
+                "행당 맵 개수", [2, 3, 4, 5, 6], index=1,
                 horizontal=True,
                 key="cmp_cols_per_row"
             )
