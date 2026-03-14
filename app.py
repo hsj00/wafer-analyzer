@@ -1,20 +1,19 @@
 # app.py
-# 웨이퍼 맵 분석기 v3.0 — 통합 메인 앱
+# 웨이퍼 맵 분석기 v4.0 — 통합 메인 앱
 # 실행: streamlit run app.py
 #
 # =============================================================================
-# [v3.0 변경 이력]
-# - 비교 모드를 웨이퍼 맵 탭 내부 서브탭으로 통합
-# - 사이드바 비교 모드 토글/데이터셋 관리 UI 제거
-# - 다중 파라미터(multi_param) 모듈 제거 → 비교 서브탭에서 대체
-#   (같은 파일의 다른 Data 컬럼을 데이터셋으로 추가)
-# - 데이터 없이도 웨이퍼 맵 사용 가능 (수동 입력 모드)
-#   빈 테이블에 x, y, data를 직접 붙여넣어 맵 생성
-# - 탭 구조: 웨이퍼 맵(단일+비교) | 결함 오버레이 | GPC | 보고서 | ML
+# [v4.0 변경 이력]
+# - [요청 1] 파일·폴더 선택 — @st.dialog 기반 팝업 구현
+# - [요청 2] 비교 모드 데이터셋 이름 자동 입력
+# - [요청 3] Raw Data 행 추가·수정·삭제 + 편집 내용 session_state 유지
+# - [요청 4] 한글/영문 언어 선택 + README 버튼
+# - [요청 5] 성능·UX·에러 핸들링 자유 개선
 #
 # 디렉토리 구조:
 # wafer_analysis/
 # ├── app.py
+# ├── i18n.py
 # ├── folder_picker_helper.py
 # └── modules/
 #     ├── __init__.py
@@ -38,6 +37,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from scipy.interpolate import griddata
+
+# ── i18n 모듈 ──────────────────────────────────────────────────────────────────
+# [요청 4] 다국어 지원
+from i18n import t, get_lang
 
 # =============================================================================
 # 모듈 import (graceful degradation)
@@ -71,7 +74,23 @@ except ImportError:
 # =============================================================================
 # [1] 페이지 설정
 # =============================================================================
-st.set_page_config(page_title="웨이퍼 맵 분석기", layout="wide")
+st.set_page_config(page_title="Wafer Map Analyzer", layout="wide")
+
+
+# =============================================================================
+# [요청 1] 환경 감지 함수
+# =============================================================================
+
+def _is_cloud_env() -> bool:
+    """Cloud 환경 자동 감지."""
+    return (
+        os.environ.get("STREAMLIT_SHARING_MODE") is not None
+        or os.path.exists("/.dockerenv")
+        or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
+    )
+
+
+IS_CLOUD = _is_cloud_env()
 
 
 # =============================================================================
@@ -80,6 +99,8 @@ st.set_page_config(page_title="웨이퍼 맵 분석기", layout="wide")
 
 def try_native_folder_dialog() -> str | None:
     """OS 네이티브 폴더 선택창 호출 (subprocess 방식)."""
+    if IS_CLOUD:
+        return None
     try:
         helper = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -104,106 +125,128 @@ def try_native_folder_dialog() -> str | None:
         return None
 
 
-def render_folder_browser() -> None:
-    """메인 화면에 직접 렌더링하는 인라인 폴더 브라우저."""
-    with st.container(border=True):
-        hd_col, close_col = st.columns([8, 1])
-        hd_col.markdown("### 📂 폴더 선택")
+# [요청 1] @st.dialog 기반 인라인 폴더 브라우저 팝업
+@st.dialog(t("fb_title") if "app_lang" in st.session_state else "📂 폴더 선택", width="large")
+def folder_browser_dialog() -> None:
+    """@st.dialog 기반 팝업 폴더 브라우저."""
+    lang = get_lang()
 
-        if close_col.button("✕", key="fb_close", use_container_width=True):
-            st.session_state.show_folder_browser = False
+    if platform.system() == "Darwin":
+        st.info(t("fb_macos_tip"))
+
+    if "browser_current" not in st.session_state:
+        st.session_state.browser_current = os.path.expanduser("~")
+
+    current = st.session_state.browser_current
+
+    st.markdown(t("fb_current_path", current))
+
+    manual = st.text_input(
+        t("sidebar_path_input"), value=current,
+        label_visibility="collapsed",
+        placeholder=t("fb_path_placeholder")
+    )
+    if manual != current and os.path.isdir(manual):
+        st.session_state.browser_current = manual
+        st.rerun()
+
+    st.markdown("---")
+
+    parent = os.path.dirname(current)
+    if parent != current:
+        if st.button(t("fb_parent"), use_container_width=True, key="fb_up"):
+            st.session_state.browser_current = parent
             st.rerun()
 
-        if platform.system() == "Darwin":
-            st.info("💡 네이티브 창: `brew install python-tk@3.14` 설치 후 재시작")
+    home = os.path.expanduser("~")
+    favorites: dict[str, str] = {
+        t("fb_home"):       home,
+        "🖥️ Desktop":      os.path.join(home, "Desktop"),
+        "📄 Documents":     os.path.join(home, "Documents"),
+    }
+    if platform.system() == "Windows":
+        favorites["💾 C:\\"] = "C:\\"
 
-        if "browser_current" not in st.session_state:
-            st.session_state.browser_current = os.path.expanduser("~")
-
-        current = st.session_state.browser_current
-        st.markdown(f"**현재 위치:** `{current}`")
-
-        manual = st.text_input(
-            "경로 입력", value=current,
-            label_visibility="collapsed",
-            placeholder="경로를 직접 입력하세요..."
-        )
-        if manual != current and os.path.isdir(manual):
-            st.session_state.browser_current = manual
-            st.rerun()
-
-        st.markdown("---")
-
-        parent = os.path.dirname(current)
-        if parent != current:
-            if st.button("⬆️ 상위 폴더", use_container_width=True, key="fb_up"):
-                st.session_state.browser_current = parent
-                st.rerun()
-
-        home = os.path.expanduser("~")
-        favorites: dict[str, str] = {
-            "🏠 홈":         home,
-            "🖥️ Desktop":   os.path.join(home, "Desktop"),
-            "📄 Documents":  os.path.join(home, "Documents"),
-        }
-        if platform.system() == "Windows":
-            favorites["💾 C:\\"] = "C:\\"
-
-        valid_favs = {label: path for label, path in favorites.items()
-                      if os.path.exists(path)}
+    valid_favs = {label: path for label, path in favorites.items()
+                  if os.path.exists(path)}
+    if valid_favs:
         fav_cols = st.columns(len(valid_favs))
         for col, (label, path) in zip(fav_cols, valid_favs.items()):
             if col.button(label, key=f"fav_{label}", use_container_width=True):
                 st.session_state.browser_current = path
                 st.rerun()
 
-        st.markdown("---")
+    st.markdown("---")
 
-        try:
-            entries = sorted([
-                d for d in os.listdir(current)
-                if os.path.isdir(os.path.join(current, d))
-                and not d.startswith(".")
-            ])
+    try:
+        entries = sorted([
+            d for d in os.listdir(current)
+            if os.path.isdir(os.path.join(current, d))
+            and not d.startswith(".")
+        ])
 
-            if not entries:
-                st.info("하위 폴더 없음")
-            else:
-                st.markdown(f"**하위 폴더 ({len(entries)}개)**")
-                for i in range(0, min(len(entries), 30), 3):
-                    row = st.columns(3)
-                    for j, col in enumerate(row):
-                        if i + j < len(entries):
-                            d = entries[i + j]
-                            label = d if len(d) <= 18 else d[:16] + "…"
-                            if col.button(
-                                f"📁 {label}",
-                                key=f"fb_dir_{i+j}",
-                                use_container_width=True,
-                                help=d
-                            ):
-                                st.session_state.browser_current = \
-                                    os.path.join(current, d)
-                                st.rerun()
-
-        except PermissionError:
-            st.error("⛔ 접근 권한 없음")
-
-        st.markdown("---")
-
-        n_csv   = len(glob.glob(os.path.join(current, "*.csv")))
-        n_xls   = len(glob.glob(os.path.join(current, "*.xls*")))
-        n_total = n_csv + n_xls
-        if n_total:
-            st.success(f"✅ CSV {n_csv}개 · XLS {n_xls}개 (총 {n_total}개)")
+        if not entries:
+            st.info(t("fb_no_subfolders"))
         else:
-            st.warning("⚠️ CSV/XLS 파일 없음")
+            st.markdown(t("fb_subfolders", len(entries)))
+            for i in range(0, min(len(entries), 30), 3):
+                row = st.columns(3)
+                for j, col in enumerate(row):
+                    if i + j < len(entries):
+                        d = entries[i + j]
+                        label = d if len(d) <= 18 else d[:16] + "…"
+                        if col.button(
+                            f"📁 {label}",
+                            key=f"fb_dir_{i+j}",
+                            use_container_width=True,
+                            help=d
+                        ):
+                            st.session_state.browser_current = \
+                                os.path.join(current, d)
+                            st.rerun()
 
-        if st.button("✅ 이 폴더 선택", type="primary",
-                     use_container_width=True, key="fb_confirm"):
-            st.session_state.data_folder        = current
-            st.session_state.show_folder_browser = False
-            st.rerun()
+    except PermissionError:
+        st.error(t("fb_permission_denied"))
+
+    st.markdown("---")
+
+    n_csv   = len(glob.glob(os.path.join(current, "*.csv")))
+    n_xls   = len(glob.glob(os.path.join(current, "*.xls*")))
+    n_total = n_csv + n_xls
+    if n_total:
+        st.success(t("fb_file_count", n_csv, n_xls, n_total))
+    else:
+        st.warning(t("fb_no_data_files"))
+
+    if st.button(t("fb_confirm"), type="primary",
+                 use_container_width=True, key="fb_confirm"):
+        st.session_state.data_folder = current
+        # [요청 1] session_state flag로 dialog 닫기 + rerun 예외 회피
+        st.session_state._dialog_folder_selected = True
+        st.rerun()
+
+
+# [요청 1] Cloud 환경용 파일 업로더 다이얼로그
+@st.dialog(t("file_dialog_title") if "app_lang" in st.session_state else "📄 파일 선택", width="large")
+def file_upload_dialog() -> None:
+    """Cloud 환경에서 st.file_uploader를 팝업으로 제공."""
+    uploaded = st.file_uploader(
+        t("file_dialog_upload_label"),
+        type=["csv", "xlsx", "xls"],
+        accept_multiple_files=True,
+        help=t("file_dialog_upload_help"),
+        key="cloud_file_uploader",
+    )
+    if uploaded:
+        upload_dir = st.session_state.data_folder
+        os.makedirs(upload_dir, exist_ok=True)
+        for f in uploaded:
+            fpath = os.path.join(upload_dir, f.name)
+            with open(fpath, "wb") as out:
+                out.write(f.getbuffer())
+        st.success(f"✅ {len(uploaded)} files saved")
+        st.session_state._dialog_file_uploaded = True
+        st.rerun()
 
 
 # =============================================================================
@@ -462,6 +505,10 @@ def apply_col_mapping(df_raw: pd.DataFrame,
                       x_col: str, y_col: str, data_col: str) -> pd.DataFrame:
     """사용자가 선택한 컬럼명 → 내부 표준명(x, y, data)으로 통일."""
     all_cols = df_raw.columns.tolist()
+    # [요청 5] 에러 핸들링 개선: 컬럼 존재 확인
+    for col_name, col_val in [("X", x_col), ("Y", y_col), ("Data", data_col)]:
+        if col_val not in all_cols:
+            raise ValueError(f"{col_name} column '{col_val}' not found in data")
     x_idx    = all_cols.index(x_col)
     y_idx    = all_cols.index(y_col)
     data_idx = all_cols.index(data_col)
@@ -495,7 +542,7 @@ def wafer_title_banner(fname: str, prefix: str = "") -> None:
         st.session_state[key] = os.path.splitext(fname)[0]
 
     new_title = st.text_input(
-        "제목",
+        t("compare_title_input"),
         value=st.session_state[key],
         key=f"input_{prefix}{fname}",
         label_visibility="collapsed"
@@ -525,7 +572,7 @@ def _render_compare_dataset_manager() -> None:
     if not datasets:
         return
 
-    st.markdown("**📋 데이터셋 목록**")
+    st.markdown(t("compare_dataset_list"))
 
     for i, ds in enumerate(datasets):
         ds_id = ds["id"]
@@ -555,19 +602,18 @@ def _render_compare_dataset_manager() -> None:
 
 def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
     """비교 서브탭: 파일 또는 수동 입력으로 데이터셋 추가."""
-    with st.expander("➕ 데이터셋 추가", expanded=(len(st.session_state.get("wm_datasets", [])) < 2)):
+    with st.expander(t("compare_add_expander"), expanded=(len(st.session_state.get("wm_datasets", [])) < 2)):
 
-        add_file_tab, add_manual_tab = st.tabs(["📁 파일에서 추가", "✏️ 수동 입력"])
+        add_file_tab, add_manual_tab = st.tabs([t("compare_from_file"), t("compare_manual_input")])
 
-        # ── [탭 A] 파일에서 추가 (기존 로직 그대로) ──────────────────────
+        # ── [탭 A] 파일에서 추가 ──────────────────────────────────────────
         with add_file_tab:
             if not file_names:
-                st.info("ℹ️ 데이터 폴더에 파일이 없습니다. '✏️ 수동 입력' 탭을 사용하세요.")
+                st.info(t("compare_no_files"))
             else:
-                # === 기존 파일 선택 로직 전체 (sel_file ~ st.button까지) ===
                 fa_col, sh_col = st.columns([3, 2])
                 with fa_col:
-                    sel_file = st.selectbox("파일", file_names, key="cmp_add_file")
+                    sel_file = st.selectbox(t("compare_file_label"), file_names, key="cmp_add_file")
                 full_path = os.path.join(data_folder, sel_file)
 
                 try:
@@ -577,12 +623,12 @@ def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
 
                 with sh_col:
                     if sheets:
-                        sel_sheet = st.selectbox("시트", sheets, key="cmp_add_sheet")
+                        sel_sheet = st.selectbox(t("compare_sheet_label"), sheets, key="cmp_add_sheet")
                     else:
                         sel_sheet = None
                         st.markdown(
-                            "<div style='padding-top:28px;font-size:12px;color:#888;'>"
-                            "CSV (시트 없음)</div>",
+                            f"<div style='padding-top:28px;font-size:12px;color:#888;'>"
+                            f"{t('compare_csv_no_sheet')}</div>",
                             unsafe_allow_html=True,
                         )
 
@@ -590,42 +636,58 @@ def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
                     df_preview = load_file_cached(full_path, sel_sheet)
                     all_cols = df_preview.columns.tolist()
                 except Exception as exc:
-                    st.error(f"❌ 파일 읽기 실패: {exc}")
+                    st.error(t("compare_file_load_fail", exc))
                     return
 
                 cx, cy, cd = st.columns(3)
                 with cx:
                     x_col = st.selectbox(
-                        "X 컬럼", all_cols,
+                        t("sidebar_x_col"), all_cols,
                         index=_default_col_index(all_cols, "x", 0),
                         key="cmp_add_x",
                     )
                 with cy:
                     y_col = st.selectbox(
-                        "Y 컬럼", all_cols,
+                        t("sidebar_y_col"), all_cols,
                         index=_default_col_index(all_cols, "y", 1),
                         key="cmp_add_y",
                     )
                 with cd:
                     data_col = st.selectbox(
-                        "Data 컬럼", all_cols,
+                        t("sidebar_data_col"), all_cols,
                         index=_default_col_index(all_cols, "data", 2),
                         key="cmp_add_data",
                     )
 
+                # [요청 2] 데이터셋 이름 자동 생성 — data_col 반영
                 sheet_tag = f"[{sel_sheet}]" if sel_sheet else ""
                 auto_name = f"{os.path.splitext(sel_file)[0]}{sheet_tag}·{data_col}"
-                ds_name = st.text_input("데이터셋 이름", value=auto_name, key="cmp_add_name")
+
+                # [요청 2] 수동 수정 감지를 위한 session_state 패턴
+                _prev_auto_key = "_cmp_prev_auto_name"
+                _user_edited_key = "_cmp_name_user_edited"
+
+                # data_col 변경 시 자동 이름 갱신 (사용자 수동 수정이 아닌 경우에만)
+                if st.session_state.get(_prev_auto_key) != auto_name:
+                    st.session_state[_prev_auto_key] = auto_name
+                    if not st.session_state.get(_user_edited_key, False):
+                        st.session_state["cmp_add_name"] = auto_name
+
+                ds_name = st.text_input(
+                    t("compare_ds_name"), value=auto_name, key="cmp_add_name",
+                    on_change=lambda: st.session_state.update({_user_edited_key: True})
+                )
 
                 existing_names = [d.get("name") for d in st.session_state.get("wm_datasets", [])]
                 btn_disabled = ds_name in existing_names
                 if btn_disabled:
-                    st.warning(f"⚠️ '{ds_name}' 이름이 이미 존재합니다.")
+                    st.warning(t("compare_name_exists", ds_name))
 
-                if st.button("✅ 추가", type="primary", key="cmp_add_btn",
+                if st.button(t("compare_add_btn"), type="primary", key="cmp_add_btn",
                              disabled=btn_disabled, use_container_width=True):
                     try:
-                        df_mapped = apply_col_mapping(df_preview, x_col, y_col, data_col)
+                        with st.spinner("..."):
+                            df_mapped = apply_col_mapping(df_preview, x_col, y_col, data_col)
                         new_ds = {
                             "id":       dataset_id(),
                             "name":     ds_name,
@@ -639,26 +701,23 @@ def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
                         if "wm_datasets" not in st.session_state:
                             st.session_state.wm_datasets = []
                         st.session_state.wm_datasets.append(new_ds)
-                        st.success(f"✅ '{ds_name}' 추가됨")
+                        # [요청 2] 추가 후 자동이름 플래그 초기화
+                        st.session_state[_user_edited_key] = False
+                        st.success(t("compare_add_success", ds_name))
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"❌ 추가 실패: {exc}")
+                        st.error(t("compare_add_fail", exc))
 
-        # ── [탭 B] 수동 입력 (신규) ─────────────────────────────────────
+        # ── [탭 B] 수동 입력 ─────────────────────────────────────────────
         with add_manual_tab:
-            st.caption(
-                "X, Y 좌표와 측정값을 직접 입력하거나 "
-                "스프레드시트에서 복사(Ctrl+V)해 붙여넣으세요."
-            )
+            st.caption(t("compare_manual_caption"))
 
-            # 수동 입력 이름
             manual_name = st.text_input(
-                "데이터셋 이름",
-                value=f"수동입력_{len(st.session_state.get('wm_datasets', [])) + 1}",
+                t("compare_ds_name"),
+                value=t("compare_manual_ds_name", len(st.session_state.get('wm_datasets', [])) + 1),
                 key="cmp_manual_name",
             )
 
-            # 빈 테이블 (session_state로 유지)
             _CMP_MANUAL_KEY = "cmp_manual_df"
             if _CMP_MANUAL_KEY not in st.session_state:
                 st.session_state[_CMP_MANUAL_KEY] = pd.DataFrame({
@@ -670,16 +729,15 @@ def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
                 num_rows="dynamic",
                 key="cmp_manual_editor",
                 column_config={
-                    "x":    st.column_config.NumberColumn("X (mm)",  format="%.2f"),
-                    "y":    st.column_config.NumberColumn("Y (mm)",  format="%.2f"),
-                    "data": st.column_config.NumberColumn("측정값",  format="%.4f"),
+                    "x":    st.column_config.NumberColumn(t("col_x_mm"),  format="%.2f"),
+                    "y":    st.column_config.NumberColumn(t("col_y_mm"),  format="%.2f"),
+                    "data": st.column_config.NumberColumn(t("col_value"), format="%.4f"),
                 },
                 use_container_width=True,
                 hide_index=False,
             )
             st.session_state[_CMP_MANUAL_KEY] = edited_manual
 
-            # 유효 데이터 추출
             df_valid = edited_manual.dropna(subset=["x", "y", "data"]).copy()
             for col in ["x", "y", "data"]:
                 df_valid[col] = pd.to_numeric(df_valid[col], errors="coerce")
@@ -687,20 +745,19 @@ def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
             n_valid = len(df_valid)
 
             if n_valid > 0:
-                st.success(f"✅ 유효 포인트: {n_valid}개")
+                st.success(t("compare_manual_valid", n_valid))
             else:
-                st.info("ℹ️ 데이터를 입력하면 추가할 수 있습니다.")
+                st.info(t("compare_manual_hint"))
 
-            # 중복 이름 체크
             existing_names = [d.get("name") for d in st.session_state.get("wm_datasets", [])]
             name_dup = manual_name in existing_names
             if name_dup:
-                st.warning(f"⚠️ '{manual_name}' 이름이 이미 존재합니다.")
+                st.warning(t("compare_name_exists", manual_name))
 
             btn_col, reset_col = st.columns([3, 1])
             with btn_col:
                 if st.button(
-                    "✅ 수동 데이터 추가", type="primary",
+                    t("compare_manual_add_btn"), type="primary",
                     key="cmp_manual_add_btn",
                     disabled=(n_valid < 3 or name_dup),
                     use_container_width=True,
@@ -718,15 +775,14 @@ def _render_compare_dataset_adder(file_names: list, data_folder: str) -> None:
                     if "wm_datasets" not in st.session_state:
                         st.session_state.wm_datasets = []
                     st.session_state.wm_datasets.append(new_ds)
-                    # 테이블 초기화 (추가 후 새 입력 준비)
                     st.session_state[_CMP_MANUAL_KEY] = pd.DataFrame({
                         "x": [None] * 10, "y": [None] * 10, "data": [None] * 10,
                     })
-                    st.success(f"✅ '{manual_name}' 추가됨")
+                    st.success(t("compare_add_success", manual_name))
                     st.rerun()
 
             with reset_col:
-                if st.button("🗑️", key="cmp_manual_reset", help="테이블 초기화"):
+                if st.button("🗑️", key="cmp_manual_reset", help=t("manual_reset_btn")):
                     st.session_state[_CMP_MANUAL_KEY] = pd.DataFrame({
                         "x": [None] * 10, "y": [None] * 10, "data": [None] * 10,
                     })
@@ -744,7 +800,7 @@ def _render_compare_card(ds: dict, resolution: int, colorscale: str,
         st.session_state[title_key] = ds["name"]
 
     new_title = st.text_input(
-        "이름", value=st.session_state[title_key],
+        t("compare_title_label"), value=st.session_state[title_key],
         key=f"cmp_input_{ds_id}", label_visibility="collapsed"
     )
     st.session_state[title_key] = new_title
@@ -756,7 +812,6 @@ def _render_compare_card(ds: dict, resolution: int, colorscale: str,
     )
 
     try:
-        # df_json이 이미 저장되어 있으면 사용, 아니면 파일에서 로드
         if "df_json" in ds and ds["df_json"]:
             df_json = ds["df_json"]
         else:
@@ -782,23 +837,30 @@ def _render_compare_card(ds: dict, resolution: int, colorscale: str,
 
         # 통계
         stats = calculate_stats(df_json)
-        stats_df = pd.DataFrame.from_dict(stats, orient="index", columns=["값"])
-        stats_df.index.name = "항목"
+        stats_df = pd.DataFrame.from_dict(stats, orient="index", columns=["값" if get_lang() == "ko" else "Value"])
+        stats_df.index.name = "항목" if get_lang() == "ko" else "Metric"
         st.dataframe(stats_df, use_container_width=True)
 
         # Raw Data (접힘)
-        with st.expander("📋 Raw Data", expanded=False):
+        # [요청 3] 비교 카드에서도 편집 가능한 data_editor 사용
+        with st.expander(t("compare_raw_data"), expanded=False):
+            _edit_key = f"cmp_edited_{ds_id}"
             df_disp = pd.read_json(df_json)
-            st.dataframe(
-                df_disp,
+
+            edited_cmp = st.data_editor(
+                st.session_state.get(_edit_key, df_disp),
+                num_rows="dynamic",
                 use_container_width=True,
                 hide_index=True,
+                key=f"cmp_editor_{ds_id}",
                 column_config={
-                    "x":    st.column_config.NumberColumn("X (mm)",  format="%.2f"),
-                    "y":    st.column_config.NumberColumn("Y (mm)",  format="%.2f"),
-                    "data": st.column_config.NumberColumn("측정값",  format="%.3f")
+                    "x":    st.column_config.NumberColumn(t("col_x_mm"),  format="%.2f"),
+                    "y":    st.column_config.NumberColumn(t("col_y_mm"),  format="%.2f"),
+                    "data": st.column_config.NumberColumn(t("col_value"), format="%.3f")
                 },
             )
+            # [요청 3] 편집 내용 session_state에 저장
+            st.session_state[_edit_key] = edited_cmp
 
     except Exception as e:
         st.error(f"❌ {e}")
@@ -811,10 +873,7 @@ def _render_compare_card(ds: dict, resolution: int, colorscale: str,
 def _check_module_available(available: bool, module_name: str) -> bool:
     """모듈 import 실패 시 에러 메시지 표시."""
     if not available:
-        st.error(
-            f"⚠️ **{module_name} 모듈을 불러올 수 없습니다.**\n\n"
-            f"`modules/` 폴더와 필요 패키지를 확인하세요."
-        )
+        st.error(t("module_unavailable", module_name))
         return False
     return True
 
@@ -822,9 +881,7 @@ def _check_module_available(available: bool, module_name: str) -> bool:
 def _check_shared_data() -> bool:
     """shared_df_json이 None이면 로드 안내 메시지 표시."""
     if st.session_state.get("shared_df_json") is None:
-        st.info(
-            "ℹ️ **먼저 '📊 웨이퍼 맵' 탭에서 파일을 로드하거나 데이터를 입력해주세요.**"
-        )
+        st.info(t("load_data_first"))
         return False
     return True
 
@@ -845,35 +902,95 @@ def _create_empty_wafer_df(n_rows: int = _MANUAL_EMPTY_ROWS) -> pd.DataFrame:
 
 
 # =============================================================================
+# [요청 4] README 표시 함수
+# =============================================================================
+def _show_readme():
+    """현재 언어에 맞는 README를 메인 영역에 표시."""
+    lang = get_lang()
+    readme_file = "README_EN.md" if lang == "en" else "README.md"
+    readme_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), readme_file)
+    if os.path.exists(readme_path):
+        with open(readme_path, "r", encoding="utf-8") as f:
+            st.markdown(f.read(), unsafe_allow_html=True)
+    else:
+        st.info(f"README file not found: {readme_file}")
+
+
+# =============================================================================
 # [8] 메인 앱
 # =============================================================================
-st.title("🔬 웨이퍼 맵 분석기")
+
+# ── SIDEBAR: 언어 선택 + README 버튼 [요청 4] ──────────────────────────────
+lang_options = {"한국어": "ko", "English": "en"}
+if "app_lang" not in st.session_state:
+    st.session_state.app_lang = "ko"
+
+selected_lang_label = st.sidebar.radio(
+    "🌐 Language",
+    list(lang_options.keys()),
+    index=0 if st.session_state.app_lang == "ko" else 1,
+    horizontal=True,
+    key="_lang_radio",
+)
+new_lang = lang_options[selected_lang_label]
+if new_lang != st.session_state.app_lang:
+    st.session_state.app_lang = new_lang
+    st.rerun()
+
+# README 버튼
+if "show_readme" not in st.session_state:
+    st.session_state.show_readme = False
+
+if st.sidebar.button(t("sidebar_readme_btn"), use_container_width=True, key="readme_btn"):
+    st.session_state.show_readme = not st.session_state.show_readme
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# ── 앱 제목 ──────────────────────────────────────────────────────────────────
+st.title(t("app_title"))
+
+# README 표시 모드
+if st.session_state.show_readme:
+    _show_readme()
+    st.stop()
+
 st.markdown("---")
 
 
 # ── SIDEBAR: 데이터 관리 ────────────────────────────────────────────────────
-st.sidebar.header("📁 데이터 관리")
+st.sidebar.header(t("sidebar_data_mgmt"))
 
 for key, val in [("data_folder", "./wafer_data/"),
                  ("show_folder_browser", False)]:
     if key not in st.session_state:
         st.session_state[key] = val
 
+# [요청 1] dialog 플래그 체크 (rerun 후 dialog 닫기)
+if st.session_state.pop("_dialog_folder_selected", False):
+    pass  # data_folder는 이미 dialog 내에서 설정됨
+if st.session_state.pop("_dialog_file_uploaded", False):
+    pass  # 파일은 이미 저장됨
+
 btn_col, path_col = st.sidebar.columns([1, 3])
 
 with btn_col:
-    if st.button("📂", help="폴더 선택", use_container_width=True):
-        folder = try_native_folder_dialog()
-        if folder:
-            st.session_state.data_folder = folder
-            st.rerun()
+    if st.button("📂", help=t("sidebar_folder_btn_help"), use_container_width=True):
+        if IS_CLOUD:
+            # [요청 1] Cloud: file_uploader dialog
+            file_upload_dialog()
         else:
-            st.session_state.show_folder_browser = True
-            st.rerun()
+            # [요청 1] Local: 네이티브 → 실패 시 @st.dialog 팝업
+            folder = try_native_folder_dialog()
+            if folder:
+                st.session_state.data_folder = folder
+                st.rerun()
+            else:
+                folder_browser_dialog()
 
 with path_col:
     manual_input = st.text_input(
-        "경로",
+        t("sidebar_path_input"),
         value=st.session_state.data_folder,
         label_visibility="collapsed",
         key="folder_text_input"
@@ -900,10 +1017,10 @@ if os.path.exists(data_folder):
     )
     file_names = [os.path.basename(f) for f in all_files]
 
-# ── 샘플 데이터 생성 버튼 (파일 없을 때 표시하되, 앱 중단 안 함) ───────────
+# ── 샘플 데이터 생성 버튼 ───────────────────────────────────────────────────
 if not file_names:
-    st.sidebar.warning("폴더에 파일 없음")
-    if st.sidebar.button("🎯 샘플 5개 생성", type="primary"):
+    st.sidebar.warning(t("sidebar_no_files"))
+    if st.sidebar.button(t("sidebar_sample_btn"), type="primary"):
         os.makedirs(data_folder, exist_ok=True)
         for idx in range(1, 6):
             np.random.seed(idx * 7)
@@ -920,29 +1037,23 @@ if not file_names:
             pd.DataFrame({"x": x_pts, "y": y_pts, "data": vals}).to_csv(
                 os.path.join(data_folder, f"wafer_{idx:02d}.csv"), index=False
             )
-        st.sidebar.success("✅ 샘플 생성!")
+        st.sidebar.success(t("sidebar_sample_done"))
         st.rerun()
-
-# ── 폴더 브라우저 ─────────────────────────────────────────────────────────
-if st.session_state.show_folder_browser:
-    render_folder_browser()
-    st.stop()
 
 
 # ── SIDEBAR: 파일 선택 (파일이 있을 때만) ──────────────────────────────────
-# v3.0: 파일 없어도 수동 입력으로 사용 가능하므로 st.stop() 호출 안 함
 has_files = bool(file_names)
 
 if has_files:
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📄 파일 선택")
+    st.sidebar.subheader(t("sidebar_file_select"))
 
-    selected_file = st.sidebar.selectbox("분석 파일", file_names)
+    selected_file = st.sidebar.selectbox(t("sidebar_analysis_file"), file_names)
     full_path     = os.path.join(data_folder, selected_file)
 
     sheets = get_sheet_names(full_path)
     if sheets:
-        selected_sheet = st.sidebar.selectbox("시트 선택", options=sheets, key="s_sheet")
+        selected_sheet = st.sidebar.selectbox(t("sidebar_sheet_select"), options=sheets, key="s_sheet")
     else:
         selected_sheet = None
 
@@ -952,6 +1063,8 @@ if has_files:
         st.session_state._s_file    = current_key
         st.session_state._s_display = None
         st.session_state._s_col_map = None
+        # [요청 3] 편집 데이터도 초기화
+        st.session_state.pop("edited_df", None)
         # 공유 데이터 초기화
         for sk in ["shared_df_json", "shared_stats", "shared_fig_heatmap",
                     "shared_fig_contour", "shared_fig_linescan", "shared_fig_3d",
@@ -967,7 +1080,7 @@ else:
 
 # ── SIDEBAR: 시각화 설정 ────────────────────────────────────────────────────
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ 시각화 설정")
+st.sidebar.header(t("sidebar_vis_settings"))
 
 COLORSCALES = {
     "Rainbow":       "Rainbow",
@@ -978,36 +1091,32 @@ COLORSCALES = {
     "Plasma":        "Plasma",
     "Spectral":      "Spectral_r"
 }
-cs_name    = st.sidebar.selectbox("컬러 스케일", list(COLORSCALES.keys()), index=0)
+cs_name    = st.sidebar.selectbox(t("sidebar_colorscale"), list(COLORSCALES.keys()), index=0)
 colorscale = COLORSCALES[cs_name]
 
-resolution  = st.sidebar.slider("해상도", 30, 200, 100, 10)
-show_points = st.sidebar.checkbox("데이터 포인트 표시", value=False)
-n_contours  = st.sidebar.slider("Contour 단계 수", 5, 40, 20)
-line_angle  = st.sidebar.slider("Line Scan 각도 (°)", 0, 175, 0, 5)
+resolution  = st.sidebar.slider(t("sidebar_resolution"), 30, 200, 100, 10)
+show_points = st.sidebar.checkbox(t("sidebar_show_points"), value=False)
+n_contours  = st.sidebar.slider(t("sidebar_contour_levels"), 5, 40, 20)
+line_angle  = st.sidebar.slider(t("sidebar_linescan_angle"), 0, 175, 0, 5)
 
 
 # =============================================================================
 # [9] 데이터 소스 결정 (파일 or 수동 입력)
 # =============================================================================
-# v3.0: 데이터 소스 = "file" (사이드바에서 파일 선택) 또는 "manual" (수동 입력)
-# 파일이 있으면 기본적으로 파일 모드, 웨이퍼 맵 탭 내부에서 수동 입력 전환 가능
-
-# 데이터 소스 모드 초기화
 if "data_source_mode" not in st.session_state:
     st.session_state.data_source_mode = "file" if has_files else "manual"
 
 
 # =============================================================================
-# [10] 탭 구성 — 5개 탭 (비교 모드는 웨이퍼 맵 탭 서브탭으로 통합)
+# [10] 탭 구성 — 5개 탭
 # =============================================================================
 
 tab_labels = [
-    "📊 웨이퍼 맵",
-    "🔍 결함 오버레이" + ("" if DEFECT_AVAILABLE else " ⚠️"),
-    "⚗️ GPC 분석"      + ("" if GPC_AVAILABLE    else " ⚠️"),
-    "📄 보고서 생성"   + ("" if REPORT_AVAILABLE else " ⚠️"),
-    "🤖 ML 이상 탐지"  + ("" if ML_AVAILABLE     else " ⚠️"),
+    t("tab_wafer"),
+    t("tab_defect") + ("" if DEFECT_AVAILABLE else " ⚠️"),
+    t("tab_gpc")    + ("" if GPC_AVAILABLE    else " ⚠️"),
+    t("tab_report") + ("" if REPORT_AVAILABLE else " ⚠️"),
+    t("tab_ml")     + ("" if ML_AVAILABLE     else " ⚠️"),
 ]
 
 (tab_wafer,
@@ -1021,22 +1130,20 @@ tab_labels = [
 # [TAB 1] 웨이퍼 맵 — 단일 분석 + 비교 분석 서브탭
 # =============================================================================
 with tab_wafer:
-    # ── 서브탭: 단일 분석 | 비교 분석 ──────────────────────────────────────
-    sub_single, sub_compare = st.tabs(["🔬 단일 분석", "🔀 비교 분석"])
+    sub_single, sub_compare = st.tabs([t("subtab_single"), t("subtab_compare")])
 
     # =====================================================================
     # [서브탭 A] 단일 분석
     # =====================================================================
     with sub_single:
-        # ── 데이터 소스 선택 (파일 / 수동 입력) ────────────────────────────
         source_options = []
         if has_files:
-            source_options.append("📁 파일 데이터")
-        source_options.append("✏️ 수동 입력")
+            source_options.append(t("source_file"))
+        source_options.append(t("source_manual"))
 
         if len(source_options) > 1:
             data_source = st.radio(
-                "데이터 소스",
+                t("source_label"),
                 options=source_options,
                 horizontal=True,
                 key="wm_data_source_radio",
@@ -1044,17 +1151,13 @@ with tab_wafer:
         else:
             data_source = source_options[0]
 
-        use_manual = (data_source == "✏️ 수동 입력")
+        use_manual = (data_source == t("source_manual"))
 
         if use_manual:
             # ── 수동 입력 모드 ──────────────────────────────────────────────
-            st.markdown("##### ✏️ 수동 데이터 입력")
-            st.caption(
-                "아래 테이블에 X, Y 좌표와 측정값을 직접 입력하거나, "
-                "스프레드시트에서 복사(Ctrl+V)해 붙여넣으세요."
-            )
+            st.markdown(t("manual_title"))
+            st.caption(t("manual_caption"))
 
-            # session_state에 수동 입력 데이터 유지
             if "manual_df" not in st.session_state:
                 st.session_state.manual_df = _create_empty_wafer_df()
 
@@ -1063,22 +1166,20 @@ with tab_wafer:
                 num_rows="dynamic",
                 key="manual_editor",
                 column_config={
-                    "x":    st.column_config.NumberColumn("X (mm)",  format="%.2f"),
-                    "y":    st.column_config.NumberColumn("Y (mm)",  format="%.2f"),
-                    "data": st.column_config.NumberColumn("측정값",  format="%.4f"),
+                    "x":    st.column_config.NumberColumn(t("col_x_mm"),  format="%.2f"),
+                    "y":    st.column_config.NumberColumn(t("col_y_mm"),  format="%.2f"),
+                    "data": st.column_config.NumberColumn(t("col_value"), format="%.4f"),
                 },
                 use_container_width=True,
                 hide_index=False,
             )
             st.session_state.manual_df = edited_manual
 
-            # 유효 데이터 추출 (NaN 행 제거)
             df_valid = (
                 edited_manual
                 .dropna(subset=["x", "y", "data"])
                 .reset_index(drop=True)
             )
-            # 숫자형 변환
             for col in ["x", "y", "data"]:
                 df_valid[col] = pd.to_numeric(df_valid[col], errors="coerce")
             df_valid = df_valid.dropna().reset_index(drop=True)
@@ -1087,36 +1188,34 @@ with tab_wafer:
 
             reset_col, info_col = st.columns([1, 3])
             with reset_col:
-                if st.button("🗑️ 초기화", key="manual_reset"):
+                if st.button(t("manual_reset_btn"), key="manual_reset"):
                     st.session_state.manual_df = _create_empty_wafer_df()
                     st.rerun()
             with info_col:
                 if n_valid >= 3:
-                    st.success(f"✅ 유효 포인트: {n_valid}개")
+                    st.success(t("manual_valid_points", n_valid))
                 elif n_valid > 0:
-                    st.warning(f"⚠️ 유효 포인트 {n_valid}개 — 최소 3개 필요")
+                    st.warning(t("manual_min_warning", n_valid))
                 else:
-                    st.info("ℹ️ 테이블에 데이터를 입력하면 웨이퍼 맵이 생성됩니다.")
+                    st.info(t("manual_input_hint"))
 
             if n_valid < 3:
-                # 데이터 부족 — 차트 렌더링 안 함
-                # 공유 데이터도 None으로 설정
                 st.session_state["shared_df_json"] = None
-                # 수동 입력 시 다른 탭에서 사용할 원본 정보도 저장
-                st.session_state["shared_filename"] = "수동 입력"
+                st.session_state["shared_filename"] = t("manual_label")
                 st.session_state["shared_all_cols"] = ["x", "y", "data"]
             else:
-                # ── 유효 데이터로 차트 생성 ──────────────────────────────────
                 df_display = df_valid.copy()
                 df_json    = df_display.to_json()
-                stats      = calculate_stats(df_json)
 
-                fig_heatmap  = create_2d_heatmap(df_json, resolution, colorscale, show_points)
-                fig_contour  = create_contour_map(df_json, resolution, colorscale,
-                                                  n_contours, show_points)
-                fig_linescan = create_line_scan(df_json, line_angle, resolution)
-                fig_3d       = create_3d_surface(df_json, resolution, colorscale)
-                _, _, _, wafer_radius = get_wafer_grid(df_json, resolution)
+                # [요청 5] st.spinner 추가
+                with st.spinner("..."):
+                    stats      = calculate_stats(df_json)
+                    fig_heatmap  = create_2d_heatmap(df_json, resolution, colorscale, show_points)
+                    fig_contour  = create_contour_map(df_json, resolution, colorscale,
+                                                      n_contours, show_points)
+                    fig_linescan = create_line_scan(df_json, line_angle, resolution)
+                    fig_3d       = create_3d_surface(df_json, resolution, colorscale)
+                    _, _, _, wafer_radius = get_wafer_grid(df_json, resolution)
 
                 # 공유 데이터 저장
                 st.session_state["shared_df_json"]      = df_json
@@ -1128,28 +1227,26 @@ with tab_wafer:
                 st.session_state["shared_df_raw"]       = df_display
                 st.session_state["shared_all_cols"]     = ["x", "y", "data"]
                 st.session_state["shared_wafer_radius"] = float(wafer_radius)
-                st.session_state["shared_filename"]     = "수동 입력"
+                st.session_state["shared_filename"]     = t("manual_label")
                 st.session_state["shared_raw_df_json"]  = df_json
                 st.session_state["shared_df_raw_original"] = df_display
 
-                # 제목 배너
                 st.markdown(
-                    "<div style='text-align:center;padding:7px;background:#1a6bbf;"
-                    "color:white;border-radius:7px;font-size:14px;font-weight:bold;"
-                    "margin-bottom:6px;'>📊 수동 입력 데이터</div>",
+                    f"<div style='text-align:center;padding:7px;background:#1a6bbf;"
+                    f"color:white;border-radius:7px;font-size:14px;font-weight:bold;"
+                    f"margin-bottom:6px;'>📊 {t('manual_data_title')}</div>",
                     unsafe_allow_html=True
                 )
 
-                # ── 차트 레이아웃 (기존과 동일) ──────────────────────────────
                 c1, c2, c3 = st.columns([5, 5, 2])
                 with c1:
-                    st.markdown("#### 2D Wafer Map")
+                    st.markdown(t("chart_heatmap"))
                     st.plotly_chart(fig_heatmap, use_container_width=True)
                 with c2:
-                    st.markdown("#### Contour Map")
+                    st.markdown(t("chart_contour"))
                     st.plotly_chart(fig_contour, use_container_width=True)
                 with c3:
-                    st.markdown("### 📊 Statistics")
+                    st.markdown(t("chart_statistics"))
                     for k, v in stats.items():
                         st.markdown(f"**{k}**")
                         st.code(str(v), language=None)
@@ -1161,7 +1258,7 @@ with tab_wafer:
                     st.plotly_chart(fig_3d, use_container_width=True)
 
                 st.download_button(
-                    "📥 CSV 다운로드",
+                    t("csv_download"),
                     df_display.to_csv(index=False),
                     "manual_wafer_export.csv",
                     "text/csv",
@@ -1171,44 +1268,55 @@ with tab_wafer:
         else:
             # ── 파일 데이터 모드 ──────────────────────────────────────────────
             if not has_files:
-                st.info("ℹ️ 데이터 폴더에 파일이 없습니다. 사이드바에서 샘플 데이터를 생성하거나 '✏️ 수동 입력'을 선택하세요.")
+                st.info(t("file_no_files_info"))
             else:
                 try:
                     df_raw = load_file_cached(full_path, selected_sheet)
                 except Exception as e:
-                    st.error(f"❌ 파일 로드 실패: {e}")
+                    st.error(t("file_load_fail", e))
                     st.stop()
 
                 all_cols = df_raw.columns.tolist()
 
-                # ── 컬럼 매핑 (사이드바에서 이미 설정된 값 또는 탭 내부에서 선택) ──
                 st.sidebar.markdown("---")
-                st.sidebar.subheader("🔗 컬럼 매핑")
+                st.sidebar.subheader(t("sidebar_col_mapping"))
 
                 def_x = _default_col_index(all_cols, "x",    0)
                 def_y = _default_col_index(all_cols, "y",    1)
                 def_d = _default_col_index(all_cols, "data", 2)
 
-                x_col    = st.sidebar.selectbox("X 컬럼",    all_cols, index=def_x, key="s_xcol")
-                y_col    = st.sidebar.selectbox("Y 컬럼",    all_cols, index=def_y, key="s_ycol")
-                data_col = st.sidebar.selectbox("Data 컬럼", all_cols, index=def_d, key="s_dcol")
+                x_col    = st.sidebar.selectbox(t("sidebar_x_col"),    all_cols, index=def_x, key="s_xcol")
+                y_col    = st.sidebar.selectbox(t("sidebar_y_col"),    all_cols, index=def_y, key="s_ycol")
+                data_col = st.sidebar.selectbox(t("sidebar_data_col"), all_cols, index=def_d, key="s_dcol")
 
                 col_key = f"{x_col}|{y_col}|{data_col}"
-                if st.session_state.get("_s_col_map") != col_key or \
-                   st.session_state.get("_s_display") is None:
+
+                # [요청 3] 컬럼 매핑 변경 시 편집 데이터도 초기화
+                if st.session_state.get("_s_col_map") != col_key:
                     st.session_state._s_col_map = col_key
                     st.session_state._s_display = apply_col_mapping(df_raw, x_col, y_col, data_col)
+                    st.session_state.pop("edited_df", None)
 
-                df_display = st.session_state._s_display
-                df_json    = df_display.to_json()
-                stats      = calculate_stats(df_json)
+                # [요청 3] 편집된 DataFrame이 있으면 우선 사용
+                if "edited_df" in st.session_state and st.session_state["edited_df"] is not None:
+                    df_display = st.session_state["edited_df"]
+                elif st.session_state.get("_s_display") is not None:
+                    df_display = st.session_state._s_display
+                else:
+                    df_display = apply_col_mapping(df_raw, x_col, y_col, data_col)
+                    st.session_state._s_display = df_display
 
-                fig_heatmap  = create_2d_heatmap(df_json, resolution, colorscale, show_points)
-                fig_contour  = create_contour_map(df_json, resolution, colorscale,
-                                                  n_contours, show_points)
-                fig_linescan = create_line_scan(df_json, line_angle, resolution)
-                fig_3d       = create_3d_surface(df_json, resolution, colorscale)
-                _, _, _, wafer_radius = get_wafer_grid(df_json, resolution)
+                df_json = df_display.to_json()
+
+                # [요청 5] st.spinner 추가
+                with st.spinner("..."):
+                    stats      = calculate_stats(df_json)
+                    fig_heatmap  = create_2d_heatmap(df_json, resolution, colorscale, show_points)
+                    fig_contour  = create_contour_map(df_json, resolution, colorscale,
+                                                      n_contours, show_points)
+                    fig_linescan = create_line_scan(df_json, line_angle, resolution)
+                    fig_3d       = create_3d_surface(df_json, resolution, colorscale)
+                    _, _, _, wafer_radius = get_wafer_grid(df_json, resolution)
 
                 # 공유 데이터 저장
                 st.session_state["shared_df_json"]      = df_json
@@ -1230,13 +1338,13 @@ with tab_wafer:
                 # ── 차트 레이아웃 ──────────────────────────────────────────
                 c1, c2, c3 = st.columns([5, 5, 2])
                 with c1:
-                    st.markdown("#### 2D Wafer Map")
+                    st.markdown(t("chart_heatmap"))
                     st.plotly_chart(fig_heatmap, use_container_width=True)
                 with c2:
-                    st.markdown("#### Contour Map")
+                    st.markdown(t("chart_contour"))
                     st.plotly_chart(fig_contour, use_container_width=True)
                 with c3:
-                    st.markdown("### 📊 Statistics")
+                    st.markdown(t("chart_statistics"))
                     for k, v in stats.items():
                         st.markdown(f"**{k}**")
                         st.code(str(v), language=None)
@@ -1247,78 +1355,81 @@ with tab_wafer:
                 with c5:
                     st.plotly_chart(fig_3d, use_container_width=True)
 
-                # ── Raw Data 편집 ────────────────────────────────────────
+                # ── [요청 3] Raw Data 편집 (행 추가·수정·삭제 + 편집 유지) ──
                 st.markdown("---")
-                st.subheader("📋 Raw Data (셀 편집 즉시 반영)")
+                st.subheader(t("raw_data_header"))
+
                 edited_df = st.data_editor(
                     df_display,
                     num_rows="dynamic",
                     key=f"single_editor_{selected_file}_{col_key}",
                     column_config={
-                        "x":    st.column_config.NumberColumn("X (mm)",  format="%.2f"),
-                        "y":    st.column_config.NumberColumn("Y (mm)",  format="%.2f"),
-                        "data": st.column_config.NumberColumn("측정값",  format="%.3f")
+                        "x":    st.column_config.NumberColumn(t("col_x_mm"),  format="%.2f"),
+                        "y":    st.column_config.NumberColumn(t("col_y_mm"),  format="%.2f"),
+                        "data": st.column_config.NumberColumn(t("col_value"), format="%.3f")
                     },
                     use_container_width=True,
                     hide_index=False
                 )
+                # [요청 3] 편집된 DataFrame을 session_state에 저장 → rerun 후에도 유지
+                st.session_state["edited_df"] = edited_df
                 st.session_state._s_display = edited_df
 
-                st.download_button(
-                    "📥 CSV 다운로드",
-                    edited_df.to_csv(index=False),
-                    "wafer_export.csv",
-                    "text/csv"
-                )
+                # [요청 3] 편집 초기화 버튼
+                reset_col, dl_col = st.columns([1, 2])
+                with reset_col:
+                    if st.button(t("raw_data_reset_btn"), key="reset_edit_btn"):
+                        st.session_state.pop("edited_df", None)
+                        st.session_state._s_display = apply_col_mapping(
+                            df_raw, x_col, y_col, data_col
+                        )
+                        st.success(t("raw_data_reset_done"))
+                        st.rerun()
+                with dl_col:
+                    st.download_button(
+                        t("csv_download"),
+                        edited_df.to_csv(index=False),
+                        "wafer_export.csv",
+                        "text/csv"
+                    )
 
     # =====================================================================
     # [서브탭 B] 비교 분석
     # =====================================================================
     with sub_compare:
-        st.markdown("#### 🔀 다중 웨이퍼 비교 분석")
-        st.caption(
-            "여러 웨이퍼를 나란히 비교합니다. "
-            "같은 파일의 다른 Data 컬럼을 추가하면 다중 파라미터 비교도 가능합니다."
-        )
+        st.markdown(t("compare_title"))
+        st.caption(t("compare_caption"))
 
-        # 데이터셋 목록 초기화
         if "wm_datasets" not in st.session_state:
             st.session_state.wm_datasets = []
 
-        # ── 설정 패널 ────────────────────────────────────────────────────
         ctrl_col1, ctrl_col2 = st.columns([1, 1])
         with ctrl_col1:
             cols_per_row = st.radio(
-                "행당 맵 개수", [2, 3, 4, 5, 6], index=1,
+                t("compare_cols_per_row"), [2, 3, 4, 5, 6], index=1,
                 horizontal=True,
                 key="cmp_cols_per_row"
             )
         with ctrl_col2:
             lock_scale = st.checkbox(
-                "🔒 컬러 스케일 통일", value=False,
+                t("compare_lock_scale"), value=False,
                 key="cmp_lock_scale"
             )
 
         st.markdown("---")
 
-        # ── 데이터셋 관리 + 추가 ──────────────────────────────────────────
         _render_compare_dataset_manager()
         _render_compare_dataset_adder(file_names, data_folder)
 
         datasets = st.session_state.get("wm_datasets", [])
 
         if len(datasets) < 2:
-            st.info(
-                "ℹ️ 데이터셋을 **2개 이상** 추가하면 비교 분석이 시작됩니다.\n\n"
-                "**💡 팁:** 같은 파일에서 Data 컬럼만 다르게 추가하면 "
-                "다중 파라미터 비교가 가능합니다."
-            )
+            st.info(t("compare_min_info"))
         else:
             st.markdown("---")
             n_sel = len(datasets)
-            st.markdown(f"**비교 중: {n_sel}개 데이터셋**")
+            st.markdown(t("compare_comparing", n_sel))
 
-            # ── 컬러 스케일 통일 범위 계산 ──────────────────────────────────
             global_zmin, global_zmax = None, None
             if lock_scale:
                 series_list = []
@@ -1339,9 +1450,8 @@ with tab_wafer:
                     all_vals = pd.concat(series_list, ignore_index=True)
                     global_zmin = float(all_vals.min())
                     global_zmax = float(all_vals.max())
-                    st.info(f"🔒 스케일 고정: {global_zmin:.2f} ~ {global_zmax:.2f}")
+                    st.info(t("compare_scale_info").format(global_zmin, global_zmax))
 
-            # ── 카드 렌더링 ──────────────────────────────────────────────────
             for batch_start in range(0, n_sel, cols_per_row):
                 batch = datasets[batch_start : batch_start + cols_per_row]
                 cols  = st.columns(len(batch))
@@ -1423,19 +1533,16 @@ with tab_ml:
     if not _check_module_available(ML_AVAILABLE, "ml_anomaly"):
         pass
     else:
-        # ── 앱 제공 초기 데이터셋 구성 ──────────────────────────────────────
         app_initial_datasets = []
 
-        # 현재 단일 모드 웨이퍼
         current_df_json  = st.session_state.get("shared_df_json")
         current_filename = st.session_state.get("shared_filename", "")
         if current_df_json is not None and current_filename:
             app_initial_datasets.append({
-                "name":    os.path.splitext(current_filename)[0] if current_filename != "수동 입력" else "수동 입력",
+                "name":    os.path.splitext(current_filename)[0] if current_filename != t("manual_label") else t("manual_label"),
                 "df_json": current_df_json,
             })
 
-        # 비교 서브탭에서 추가된 데이터셋
         for ds in st.session_state.get("wm_datasets", []):
             if any(m["name"] == ds["name"] for m in app_initial_datasets):
                 continue
